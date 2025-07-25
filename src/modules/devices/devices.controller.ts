@@ -139,6 +139,8 @@ export class DevicesController {
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - hoursCount * 60 * 60 * 1000).toISOString();
       
+      console.log(`[DEBUG] TimeSeries Query: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}`);
+      
       const timeSeriesData = await this.devicesService.getTimeSeriesData(
         deviceId,
         startTime,
@@ -146,8 +148,11 @@ export class DevicesController {
         aggregateWindow || '1h'
       );
       
+      console.log(`[DEBUG] TimeSeries Result: ${timeSeriesData.length} records found`);
+      
       return timeSeriesData;
     } catch (error) {
+      console.error('[DEBUG] TimeSeries Error:', error);
       if (error instanceof HttpException) {
         throw error;
       }
@@ -155,6 +160,41 @@ export class DevicesController {
         'Failed to get time series data', 
         HttpStatus.INTERNAL_SERVER_ERROR
       );
+    }
+  }
+
+  @Get('debug/influxdb')
+  async debugInfluxDB() {
+    try {
+      const bucket = process.env.INFLUXDB_BUCKET || 'waterpump';
+      const org = process.env.INFLUXDB_ORG || 'your-org';
+      const url = process.env.INFLUXDB_URL || 'http://localhost:8086';
+      
+      console.log('[DEBUG] InfluxDB Config:', { bucket, org, url });
+      
+      // Test basic query
+      const testData = await this.devicesService.getDeviceHistory(
+        'esp32_controller_001',
+        'water_levels',
+        new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        new Date().toISOString()
+      );
+      
+      return {
+        config: { bucket, org, url },
+        testQuery: {
+          deviceId: 'esp32_controller_001',
+          measurement: 'water_levels',
+          recordsFound: testData.length,
+          sampleData: testData.slice(0, 3)
+        }
+      };
+    } catch (error) {
+      console.error('[DEBUG] InfluxDB Debug Error:', error);
+      return {
+        error: error.message,
+        stack: error.stack
+      };
     }
   }
 } 
