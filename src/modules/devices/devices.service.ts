@@ -401,7 +401,7 @@ export class DevicesService {
     // Create a map to store data by timestamp
     const timeMap = new Map<string, any>();
 
-    // Process water levels data
+    // Process water levels data (raw InfluxDB format)
     waterLevelsData.forEach(record => {
       const timestamp = record._time;
       if (!timeMap.has(timestamp)) {
@@ -416,14 +416,18 @@ export class DevicesService {
       }
 
       const dataPoint = timeMap.get(timestamp);
-      if (record.tank_id === 'ground') {
-        dataPoint.groundLevel = record.level_percent || 0;
-      } else if (record.tank_id === 'roof') {
-        dataPoint.roofLevel = record.level_percent || 0;
+      
+      // Handle different field types from InfluxDB
+      if (record._field === 'level_percent') {
+        if (record.tank_id === 'ground') {
+          dataPoint.groundLevel = record._value || 0;
+        } else if (record.tank_id === 'roof') {
+          dataPoint.roofLevel = record._value || 0;
+        }
       }
     });
 
-    // Process pump metrics data
+    // Process pump metrics data (raw InfluxDB format)
     pumpMetricsData.forEach(record => {
       const timestamp = record._time;
       if (!timeMap.has(timestamp)) {
@@ -438,15 +442,27 @@ export class DevicesService {
       }
 
       const dataPoint = timeMap.get(timestamp);
-      dataPoint.pumpStatus = record.running ? 1 : 0;
-      dataPoint.pumpPower = record.power_watts || 0;
-      dataPoint.pumpCurrent = record.current_amps || 0;
+      
+      // Handle different field types from InfluxDB
+      if (record._field === 'running') {
+        dataPoint.pumpStatus = record._value ? 1 : 0;
+      } else if (record._field === 'power_watts') {
+        dataPoint.pumpPower = record._value || 0;
+      } else if (record._field === 'current_amps') {
+        dataPoint.pumpCurrent = record._value || 0;
+      }
     });
 
     // Convert map to array and sort by timestamp
     const result = Array.from(timeMap.values()).sort((a, b) => 
       new Date(a.time).getTime() - new Date(b.time).getTime()
     );
+
+    // If we have too much data, sample it to avoid overwhelming the frontend
+    if (result.length > 100) {
+      const step = Math.ceil(result.length / 100);
+      return result.filter((_, index) => index % step === 0);
+    }
 
     return result;
   }

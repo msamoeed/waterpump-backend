@@ -89,13 +89,16 @@ export class InfluxService {
     aggregateWindow?: string
   ): Promise<any[]> {
     const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    
+    // For now, let's use a simpler approach without aggregation to avoid boolean field issues
+    // We'll get raw data and handle aggregation in the application layer if needed
     const fluxQuery = `
       from(bucket: "${bucket}")
         |> range(start: ${startTime}, stop: ${endTime})
         |> filter(fn: (r) => r._measurement == "${measurement}")
         |> filter(fn: (r) => r.device_id == "${deviceId}")
-        ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
-        |> yield(name: "mean")
+        |> sort(columns: ["_time"])
+        |> yield(name: "raw_data")
     `;
 
     const result = [];
