@@ -67,7 +67,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: ./Dockerfile
       args:
         NODE_ENV: production
     environment:
@@ -85,7 +85,8 @@ services:
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
       INFLUXDB_ORG: ${INFLUXDB_ORG:-waterpump-org}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-waterpump}
-    # No external port mapping - accessed through nginx reverse proxy
+    ports:
+      - "3000:3000"
     depends_on:
       postgres:
         condition: service_healthy
@@ -111,21 +112,7 @@ services:
           memory: 256M
           cpus: '0.25'
 
-  # Nginx Reverse Proxy (Production)
-  nginx:
-    image: nginx:alpine
-    container_name: waterpump-nginx-prod
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./ssl:/etc/nginx/ssl:ro
-    depends_on:
-      - api
-    networks:
-      - waterpump-network
-    restart: unless-stopped
+
 
 volumes:
   postgres_data_prod:
