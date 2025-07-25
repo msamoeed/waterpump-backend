@@ -6,8 +6,14 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   
   // Enable CORS
-  app.enableCors();
-  // Global validation pipe
+  app.enableCors({
+    origin: [
+      'https://waterpump-frontend.vercel.app', // Allow your Vercel frontend
+      'http://localhost:3000', // (optional) Allow local dev
+    ],
+    credentials: true, // if you use cookies/auth
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+  });
   app.useGlobalPipes(new ValidationPipe({
     whitelist: true,
     forbidNonWhitelisted: true,
