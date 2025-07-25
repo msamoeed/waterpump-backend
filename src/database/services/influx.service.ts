@@ -90,16 +90,44 @@ export class InfluxService {
   ): Promise<any[]> {
     const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
     
-    // For now, let's use a simpler approach without aggregation to avoid boolean field issues
-    // We'll get raw data and handle aggregation in the application layer if needed
-    const fluxQuery = `
-      from(bucket: "${bucket}")
-        |> range(start: ${startTime}, stop: ${endTime})
-        |> filter(fn: (r) => r._measurement == "${measurement}")
-        |> filter(fn: (r) => r.device_id == "${deviceId}")
-        |> sort(columns: ["_time"])
-        |> yield(name: "raw_data")
-    `;
+    // Use the same query structure as the working InfluxDB UI query
+    let fluxQuery: string;
+    
+    if (measurement === 'water_levels') {
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r["_measurement"] == "water_levels")
+          |> filter(fn: (r) => r["_field"] == "level_percent" or r["_field"] == "level_inches")
+          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+          |> filter(fn: (r) => r["tank_id"] == "ground" or r["tank_id"] == "roof")
+          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
+          |> yield(name: "mean")
+      `;
+    } else if (measurement === 'pump_metrics') {
+      // For pump metrics, only aggregate numeric fields
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r["_measurement"] == "pump_metrics")
+          |> filter(fn: (r) => r["_field"] == "current_amps" or r["_field"] == "power_watts" or r["_field"] == "running")
+          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
+          |> yield(name: "mean")
+      `;
+    } else {
+      // For other measurements, use simple query
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r._measurement == "${measurement}")
+          |> filter(fn: (r) => r.device_id == "${deviceId}")
+          |> sort(columns: ["_time"])
+          |> yield(name: "raw_data")
+      `;
+    }
+
+    console.log(`[DEBUG] InfluxDB Query: ${fluxQuery}`);
 
     const result = [];
     await this.queryApi.queryRows(fluxQuery, {
@@ -116,6 +144,7 @@ export class InfluxService {
       }
     });
 
+    console.log(`[DEBUG] InfluxDB Result: ${result.length} records found`);
     return result;
   }
 
