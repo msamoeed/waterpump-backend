@@ -168,6 +168,41 @@ export class DevicesService {
     };
   }
 
+  async getTimeSeriesData(
+    deviceId: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow: string
+  ): Promise<any[]> {
+    try {
+      // Get water levels data
+      const waterLevelsData = await this.influxService.queryHistoricalData(
+        deviceId,
+        'water_levels',
+        startTime,
+        endTime,
+        aggregateWindow
+      );
+
+      // Get pump metrics data
+      const pumpMetricsData = await this.influxService.queryHistoricalData(
+        deviceId,
+        'pump_metrics',
+        startTime,
+        endTime,
+        aggregateWindow
+      );
+
+      // Process and format the data for the frontend
+      const processedData = this.processTimeSeriesData(waterLevelsData, pumpMetricsData);
+      
+      return processedData;
+    } catch (error) {
+      console.error('Error getting time series data:', error);
+      throw error;
+    }
+  }
+
   private async checkAndProcessAlerts(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
     try {
       // Ensure device exists before processing alerts
@@ -360,5 +395,59 @@ export class DevicesService {
         error: error.message,
       };
     }
+  }
+
+  private processTimeSeriesData(waterLevelsData: any[], pumpMetricsData: any[]): any[] {
+    // Create a map to store data by timestamp
+    const timeMap = new Map<string, any>();
+
+    // Process water levels data
+    waterLevelsData.forEach(record => {
+      const timestamp = record._time;
+      if (!timeMap.has(timestamp)) {
+        timeMap.set(timestamp, {
+          time: timestamp,
+          groundLevel: 0,
+          roofLevel: 0,
+          pumpStatus: 0,
+          pumpPower: 0,
+          pumpCurrent: 0,
+        });
+      }
+
+      const dataPoint = timeMap.get(timestamp);
+      if (record.tank_id === 'ground') {
+        dataPoint.groundLevel = record.level_percent || 0;
+      } else if (record.tank_id === 'roof') {
+        dataPoint.roofLevel = record.level_percent || 0;
+      }
+    });
+
+    // Process pump metrics data
+    pumpMetricsData.forEach(record => {
+      const timestamp = record._time;
+      if (!timeMap.has(timestamp)) {
+        timeMap.set(timestamp, {
+          time: timestamp,
+          groundLevel: 0,
+          roofLevel: 0,
+          pumpStatus: 0,
+          pumpPower: 0,
+          pumpCurrent: 0,
+        });
+      }
+
+      const dataPoint = timeMap.get(timestamp);
+      dataPoint.pumpStatus = record.running ? 1 : 0;
+      dataPoint.pumpPower = record.power_watts || 0;
+      dataPoint.pumpCurrent = record.current_amps || 0;
+    });
+
+    // Convert map to array and sort by timestamp
+    const result = Array.from(timeMap.values()).sort((a, b) => 
+      new Date(a.time).getTime() - new Date(b.time).getTime()
+    );
+
+    return result;
   }
 } 

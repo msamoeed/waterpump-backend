@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Body, Param, HttpException, HttpStatus } from '@nestjs/common';
+import { Controller, Post, Get, Body, Param, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { DevicesService } from './devices.service';
 import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
 
@@ -84,23 +84,24 @@ export class DevicesController {
   @Get(':deviceId/history')
   async getDeviceHistory(
     @Param('deviceId') deviceId: string,
-    @Body() query: { startTime?: string; endTime?: string; measurement?: string }
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string,
+    @Query('measurement') measurement?: string,
+    @Query('aggregateWindow') aggregateWindow?: string
   ) {
     try {
-      const { startTime, endTime, measurement = 'water_levels' } = query;
+      const measurementType = measurement || 'water_levels';
       
-      if (!startTime || !endTime) {
-        throw new HttpException(
-          'Start time and end time are required', 
-          HttpStatus.BAD_REQUEST
-        );
-      }
+      // Default to last 24 hours if no time range provided
+      const end = endTime || new Date().toISOString();
+      const start = startTime || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       
       const history = await this.devicesService.getDeviceHistory(
         deviceId, 
-        measurement, 
-        startTime, 
-        endTime
+        measurementType, 
+        start, 
+        end,
+        aggregateWindow
       );
       
       return history;
@@ -122,6 +123,36 @@ export class DevicesController {
     } catch (error) {
       throw new HttpException(
         'Failed to get system stats', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get(':deviceId/timeseries')
+  async getTimeSeriesData(
+    @Param('deviceId') deviceId: string,
+    @Query('hours') hours?: string,
+    @Query('aggregateWindow') aggregateWindow?: string
+  ) {
+    try {
+      const hoursCount = parseInt(hours || '24');
+      const endTime = new Date().toISOString();
+      const startTime = new Date(Date.now() - hoursCount * 60 * 60 * 1000).toISOString();
+      
+      const timeSeriesData = await this.devicesService.getTimeSeriesData(
+        deviceId,
+        startTime,
+        endTime,
+        aggregateWindow || '1h'
+      );
+      
+      return timeSeriesData;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to get time series data', 
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }
