@@ -48,9 +48,7 @@ services:
 
   # Nest.js Backend API
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/msamoeed/waterpump-backend:latest
     container_name: waterpump-api
     environment:
       NODE_ENV: development

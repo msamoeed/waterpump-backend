@@ -12,11 +12,14 @@ RUN npm install
 # Copy source code
 COPY . .
 
-# Build the application
-RUN npm run build
+# Build arguments
+ARG NODE_ENV=production
+
+# Build the application only for production
+RUN if [ "$NODE_ENV" = "production" ]; then npm run build; fi
 
 # Expose port
 EXPOSE 3000
 
-# Start the application
-CMD ["node", "dist/main.js"] 
+# Start the application based on environment
+CMD if [ "$NODE_ENV" = "production" ]; then node dist/main.js; else npm run start:dev; fi 

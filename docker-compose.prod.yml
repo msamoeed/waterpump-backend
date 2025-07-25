@@ -65,9 +65,7 @@ services:
 
   # Nest.js Backend API (Production)
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/msamoeed/waterpump-backend:latest
     container_name: waterpump-api-prod
     environment:
       NODE_ENV: production
@@ -85,7 +83,7 @@ services:
       INFLUXDB_ORG: ${INFLUXDB_ORG:-waterpump-org}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-waterpump}
     ports:
-      - "${API_PORT:-3000}:3000"
+      - "${API_PORT:-3002}:3000"
     depends_on:
       postgres:
         condition: service_healthy
