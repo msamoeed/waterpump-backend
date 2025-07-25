@@ -18,6 +18,27 @@ export class DevicesService {
   async updateDeviceStatus(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
     const timestamp = new Date();
 
+    // Check if device exists in PostgreSQL, create if it doesn't
+    let device = await this.postgresService.getDevice(statusUpdate.device_id);
+    if (!device) {
+      console.log(`Creating new device: ${statusUpdate.device_id}`);
+      try {
+        device = await this.postgresService.createDevice({
+          device_id: statusUpdate.device_id,
+          name: `ESP32 Controller - ${statusUpdate.device_id}`,
+          location: 'Water Pump System',
+          tank_capacity_liters: 1000, // Default value
+          pump_max_current: 10.0, // Default value
+        });
+        console.log(`Device created successfully: ${device.device_id}`);
+      } catch (error) {
+        console.error(`Failed to create device ${statusUpdate.device_id}:`, error);
+        // Continue without device creation to avoid blocking the status update
+      }
+    } else {
+      console.log(`Device already exists: ${statusUpdate.device_id}`);
+    }
+
     // Store in InfluxDB (parallel execution)
     const influxPromises = [
       this.influxService.writeWaterLevels(statusUpdate, timestamp),
@@ -47,10 +68,13 @@ export class DevicesService {
 
   async handlePumpEvent(pumpEvent: any): Promise<void> {
     const timestamp = new Date();
+    
+    // Extract device_id from the event or use a default
+    const deviceId = pumpEvent.device_id || 'esp32_controller_001';
 
     // Store pump event in InfluxDB
     await this.influxService.writeSystemEvent(
-      pumpEvent.device_id || 'unknown',
+      deviceId,
       'pump_event',
       pumpEvent.trigger_reason || 'Unknown reason',
       'info',
@@ -72,7 +96,7 @@ export class DevicesService {
 
     // Log event in PostgreSQL
     await this.postgresService.insertEventLog({
-      device_id: pumpEvent.device_id || 'unknown',
+      device_id: deviceId,
       event_type: 'pump_event',
       message: `${pumpEvent.event_type}: ${pumpEvent.trigger_reason}`,
       severity: 'info',
@@ -145,87 +169,121 @@ export class DevicesService {
   }
 
   private async checkAndProcessAlerts(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
-    const alerts = [];
+    try {
+      // Ensure device exists before processing alerts
+      let device = await this.postgresService.getDevice(statusUpdate.device_id);
+      if (!device) {
+        console.log(`Device ${statusUpdate.device_id} not found, skipping alerts`);
+        return;
+      }
 
-    // Check sensor connectivity
-    if (!statusUpdate.ground_tank.connected) {
-      alerts.push({
-        type: 'sensor_offline',
-        message: 'Ground tank sensor offline',
-        severity: 'high',
-      });
-    }
+      const alerts = [];
 
-    if (!statusUpdate.roof_tank.connected) {
-      alerts.push({
-        type: 'sensor_offline',
-        message: 'Roof tank sensor offline',
-        severity: 'high',
-      });
-    }
+      // Check sensor connectivity
+      if (!statusUpdate.ground_tank.connected) {
+        alerts.push({
+          type: 'sensor_offline',
+          message: 'Ground tank sensor offline',
+          severity: 'high',
+        });
+      }
 
-    // Check water levels
-    if (statusUpdate.ground_tank.level_percent < 15) {
-      alerts.push({
-        type: 'low_water',
-        message: 'Ground tank critically low',
-        severity: 'critical',
-      });
-    }
+      if (!statusUpdate.roof_tank.connected) {
+        alerts.push({
+          type: 'sensor_offline',
+          message: 'Roof tank sensor offline',
+          severity: 'high',
+        });
+      }
 
-    if (statusUpdate.roof_tank.level_percent < 20) {
-      alerts.push({
-        type: 'low_water',
-        message: 'Roof tank low water level',
-        severity: 'warning',
-      });
-    }
+      // Check water levels
+      if (statusUpdate.ground_tank.level_percent < 15) {
+        alerts.push({
+          type: 'low_water',
+          message: 'Ground tank critically low',
+          severity: 'critical',
+        });
+      }
 
-    // Check pump protection
-    if (statusUpdate.pump.protection_active) {
-      alerts.push({
-        type: 'pump_protection',
-        message: 'Pump protection activated',
-        severity: 'critical',
-      });
-    }
+      if (statusUpdate.roof_tank.level_percent < 20) {
+        alerts.push({
+          type: 'low_water',
+          message: 'Roof tank low water level',
+          severity: 'warning',
+        });
+      }
 
-    // Check pump current
-    if (statusUpdate.pump.current_amps > 10) {
-      alerts.push({
-        type: 'overcurrent',
-        message: 'Pump overcurrent detected',
-        severity: 'critical',
-      });
-    }
+      // Check pump protection
+      if (statusUpdate.pump.protection_active) {
+        alerts.push({
+          type: 'pump_protection',
+          message: 'Pump protection activated',
+          severity: 'critical',
+        });
+      }
 
-    // Process alerts if any
-    if (alerts.length > 0) {
-      await this.processAlerts(statusUpdate.device_id, alerts);
+      // Check pump current
+      if (statusUpdate.pump.current_amps > 10) {
+        alerts.push({
+          type: 'overcurrent',
+          message: 'Pump overcurrent detected',
+          severity: 'critical',
+        });
+      }
+
+      // Process alerts if any
+      if (alerts.length > 0) {
+        await this.processAlerts(statusUpdate.device_id, alerts);
+      }
+    } catch (error) {
+      console.error('Error processing alerts:', error);
     }
   }
 
   private async processAlerts(deviceId: string, alerts: any[]): Promise<void> {
-    // Store alerts in PostgreSQL
-    for (const alert of alerts) {
-      await this.postgresService.insertAlert(deviceId, alert);
-    }
+    try {
+      // Verify device exists before processing alerts
+      const device = await this.postgresService.getDevice(deviceId);
+      if (!device) {
+        console.log(`Device ${deviceId} not found, skipping alert processing`);
+        return;
+      }
 
-    // Store active alerts in Redis
-    for (const alert of alerts) {
-      const alertId = `${alert.type}_${Date.now()}`;
-      await this.redisService.setActiveAlert(deviceId, alertId, alert);
-    }
+      // Store alerts in PostgreSQL
+      for (const alert of alerts) {
+        try {
+          await this.postgresService.insertAlert(deviceId, alert);
+        } catch (error) {
+          console.error(`Failed to insert alert for device ${deviceId}:`, error);
+        }
+      }
 
-    // Emit to WebSocket clients
-    for (const alert of alerts) {
-      this.websocketGateway.emitAlert({
-        device_id: deviceId,
-        alert_type: alert.type,
-        message: alert.message,
-        severity: alert.severity,
-        timestamp: new Date().toISOString(),
-      });
+      // Store active alerts in Redis
+      for (const alert of alerts) {
+        try {
+          const alertId = `${alert.type}_${Date.now()}`;
+          await this.redisService.setActiveAlert(deviceId, alertId, alert);
+        } catch (error) {
+          console.error(`Failed to store alert in Redis for device ${deviceId}:`, error);
+        }
+      }
+
+      // Emit to WebSocket clients
+      for (const alert of alerts) {
+        try {
+          this.websocketGateway.emitAlert({
+            device_id: deviceId,
+            alert_type: alert.type,
+            message: alert.message,
+            severity: alert.severity,
+            timestamp: new Date().toISOString(),
+          });
+        } catch (error) {
+          console.error(`Failed to emit alert via WebSocket for device ${deviceId}:`, error);
+        }
+      }
+    } catch (error) {
+      console.error('Error in processAlerts:', error);
     }
   }
 
