@@ -49,6 +49,7 @@ jobs:
             type=sha,prefix={{branch}}-
 
       - name: Build and push Docker image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: ./backend
@@ -59,6 +60,9 @@ jobs:
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
-      - name: Output image digest
+      - name: Output image info
         if: github.event_name != 'pull_request'
-        run: echo "Image digest: ${{ steps.build.outputs.digest }}" 
+        run: |
+          echo "Built image tags:"
+          echo "${{ steps.meta.outputs.tags }}"
+          echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" 
