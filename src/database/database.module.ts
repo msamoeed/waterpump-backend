@@ -21,7 +21,7 @@ import { PostgresService } from './services/postgres.service';
         entities: [Device, AlertRule, EventLog],
         synchronize: configService.get('NODE_ENV') === 'development',
         logging: configService.get('NODE_ENV') === 'development',
-        ssl: configService.get('NODE_ENV') === 'production' ? { rejectUnauthorized: false } : false,
+        ssl: false, // Disable SSL for all environments
       }),
       inject: [ConfigService],
     }),
