@@ -466,4 +466,53 @@ export class DevicesService {
 
     return result;
   }
+
+  // Water supply duration methods using existing time series data
+  async getWaterSupplySessions(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
+    return await this.influxService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
+  }
+
+  async getWaterSupplyStats(deviceId: string, tankId: string, days: number = 30): Promise<any> {
+    const endTime = new Date().toISOString();
+    const startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    
+    const result = await this.influxService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
+    
+    return {
+      device_id: deviceId,
+      tank_id: tankId,
+      period_days: days,
+      stats: result.stats,
+      sessions: result.sessions
+    };
+  }
+
+  async getCurrentWaterSupplyStatus(deviceId: string): Promise<any> {
+    // Get the latest water supply status for both tanks
+    const latestData = await this.influxService.getLatestDeviceData(deviceId);
+    
+    const groundTankStatus = latestData.find(record => 
+      record._measurement === 'water_levels' && 
+      record.tank_id === 'ground' && 
+      record._field === 'water_supply_on'
+    );
+    
+    const roofTankStatus = latestData.find(record => 
+      record._measurement === 'water_levels' && 
+      record.tank_id === 'roof' && 
+      record._field === 'water_supply_on'
+    );
+    
+    return {
+      device_id: deviceId,
+      ground_tank: {
+        water_supply_on: groundTankStatus?._value || false,
+        last_update: groundTankStatus?._time || null
+      },
+      roof_tank: {
+        water_supply_on: roofTankStatus?._value || false,
+        last_update: roofTankStatus?._time || null
+      }
+    };
+  }
 } 

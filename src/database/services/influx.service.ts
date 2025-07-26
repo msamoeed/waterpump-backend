@@ -35,8 +35,9 @@ export class InfluxService {
         .booleanField('alarm_active', statusUpdate.ground_tank.alarm_active)
         .booleanField('connected', statusUpdate.ground_tank.connected)
         .booleanField('sensor_working', statusUpdate.ground_tank.sensor_working)
+        .booleanField('water_supply_on', statusUpdate.ground_tank.water_supply_on)
         .timestamp(timestamp),
-      
+
       new Point('water_levels')
         .tag('device_id', statusUpdate.device_id)
         .tag('tank_id', 'roof')
@@ -45,6 +46,7 @@ export class InfluxService {
         .booleanField('alarm_active', statusUpdate.roof_tank.alarm_active)
         .booleanField('connected', statusUpdate.roof_tank.connected)
         .booleanField('sensor_working', statusUpdate.roof_tank.sensor_working)
+        .booleanField('water_supply_on', statusUpdate.roof_tank.water_supply_on)
         .timestamp(timestamp),
     ];
 
@@ -173,5 +175,91 @@ export class InfluxService {
     });
 
     return result;
+  }
+
+  async getWaterSupplyDuration(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
+    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    
+    // Query to get water supply state changes
+    const fluxQuery = `
+      from(bucket: "${bucket}")
+        |> range(start: ${startTime}, stop: ${endTime})
+        |> filter(fn: (r) => r["_measurement"] == "water_levels")
+        |> filter(fn: (r) => r["_field"] == "water_supply_on")
+        |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+        |> filter(fn: (r) => r["tank_id"] == "${tankId}")
+        |> sort(columns: ["_time"])
+    `;
+
+    const results: any[] = [];
+    
+    const result = [];
+    await this.queryApi.queryRows(fluxQuery, {
+      next(row, tableMeta) {
+        const record = tableMeta.toObject(row);
+        result.push(record);
+      },
+      error(error) {
+        console.error('InfluxDB water supply query error:', error);
+        throw error;
+      },
+      complete() {
+        // Query completed successfully
+      }
+    });
+
+    // Process the results to calculate durations
+    const sessions = [];
+    let currentSession = null;
+    
+    for (let i = 0; i < result.length; i++) {
+      const record = result[i];
+      const isSupplyOn = record._value === true;
+      const timestamp = new Date(record._time);
+      
+      if (isSupplyOn && !currentSession) {
+        // Start of a new session
+        currentSession = {
+          start_time: timestamp,
+          end_time: null,
+          duration_minutes: 0
+        };
+      } else if (!isSupplyOn && currentSession) {
+        // End of current session
+        currentSession.end_time = timestamp;
+        currentSession.duration_minutes = Math.floor(
+          (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+        );
+        sessions.push(currentSession);
+        currentSession = null;
+      }
+    }
+    
+    // Handle case where session is still active at the end of the time range
+    if (currentSession) {
+      currentSession.end_time = new Date(endTime);
+      currentSession.duration_minutes = Math.floor(
+        (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+      );
+      sessions.push(currentSession);
+    }
+    
+    // Calculate statistics
+    const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
+    const totalSessions = sessions.length;
+    const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
+    const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
+    const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
+    
+    return {
+      sessions: sessions,
+      stats: {
+        total_duration_hours: totalDurationMinutes / 60,
+        total_sessions: totalSessions,
+        avg_duration_minutes: avgDurationMinutes,
+        max_duration_minutes: maxDurationMinutes,
+        min_duration_minutes: minDurationMinutes
+      }
+    };
   }
 } 

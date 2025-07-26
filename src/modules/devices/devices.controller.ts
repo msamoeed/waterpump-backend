@@ -197,4 +197,80 @@ export class DevicesController {
       };
     }
   }
+
+  @Get(':deviceId/water-supply/sessions')
+  async getWaterSupplySessions(
+    @Param('deviceId') deviceId: string,
+    @Query('tankId') tankId: string,
+    @Query('startTime') startTime?: string,
+    @Query('endTime') endTime?: string
+  ) {
+    try {
+      if (!tankId) {
+        throw new HttpException('tankId parameter is required', HttpStatus.BAD_REQUEST);
+      }
+      
+      const end = endTime || new Date().toISOString();
+      const start = startTime || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      
+      const result = await this.devicesService.getWaterSupplySessions(deviceId, tankId, start, end);
+      
+      return {
+        device_id: deviceId,
+        tank_id: tankId,
+        start_time: start,
+        end_time: end,
+        ...result
+      };
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to get water supply sessions', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get(':deviceId/water-supply/stats')
+  async getWaterSupplyStats(
+    @Param('deviceId') deviceId: string,
+    @Query('tankId') tankId: string,
+    @Query('days') days?: string
+  ) {
+    try {
+      if (!tankId) {
+        throw new HttpException('tankId parameter is required', HttpStatus.BAD_REQUEST);
+      }
+      
+      const daysCount = parseInt(days || '30');
+      const result = await this.devicesService.getWaterSupplyStats(deviceId, tankId, daysCount);
+      
+      return result;
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to get water supply stats', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get(':deviceId/water-supply/status')
+  async getCurrentWaterSupplyStatus(
+    @Param('deviceId') deviceId: string
+  ) {
+    try {
+      const result = await this.devicesService.getCurrentWaterSupplyStatus(deviceId);
+      return result;
+    } catch (error) {
+      throw new HttpException(
+        'Failed to get current water supply status', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 } 
