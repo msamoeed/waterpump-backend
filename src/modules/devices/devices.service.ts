@@ -3,7 +3,7 @@ import { InfluxService } from '../../database/services/influx.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 import { WebSocketGateway } from '../websocket/websocket.gateway';
-import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
+import { DeviceStatusUpdateDto, PumpCommandDto } from '../../common/dto/device-status-update.dto';
 import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interfaces/websocket-events.interface';
 
 @Injectable()
@@ -101,6 +101,62 @@ export class DevicesService {
       message: `${pumpEvent.event_type}: ${pumpEvent.trigger_reason}`,
       severity: 'info',
     });
+  }
+
+  async handlePumpCommand(pumpCommand: PumpCommandDto): Promise<void> {
+    const timestamp = new Date();
+    const deviceId = pumpCommand.device_id || 'esp32_controller_001';
+    
+    // Validate command
+    if (!pumpCommand.action) {
+      throw new Error('Pump action is required');
+    }
+    
+    // Store command in Redis for ESP32 to pick up
+    const commandKey = `pump_command:${deviceId}`;
+    const commandData = {
+      action: pumpCommand.action,
+      target_level: pumpCommand.target_level || null,
+      reason: pumpCommand.reason || 'API command',
+      timestamp: timestamp.toISOString(),
+      processed: false
+    };
+    
+    await this.redisService.set(commandKey, JSON.stringify(commandData), 60); // 1 minute TTL
+    
+    // Log command in PostgreSQL
+    await this.postgresService.insertEventLog({
+      device_id: deviceId,
+      event_type: 'pump_command',
+      message: `API Command: ${pumpCommand.action} - ${pumpCommand.reason || 'No reason provided'}`,
+      severity: 'info',
+    });
+    
+    // Emit command via WebSocket
+    this.websocketGateway.emitPumpEvent({
+      event_type: 'pump_command',
+      pump_on: pumpCommand.action === 'start' || pumpCommand.action === 'target',
+      trigger_reason: `API Command: ${pumpCommand.action}`,
+      ground_tank_level: 0, // Will be updated by ESP32
+      roof_tank_level: 0,   // Will be updated by ESP32
+      pump_current: 0,      // Will be updated by ESP32
+      pump_power: 0,        // Will be updated by ESP32
+      protection_active: false,
+      timestamp: timestamp.toISOString(),
+    });
+  }
+
+  async getPumpCommand(deviceId: string): Promise<any> {
+    const commandKey = `pump_command:${deviceId}`;
+    const commandData = await this.redisService.get(commandKey);
+    
+    if (commandData) {
+      // Clear the command after retrieving it
+      await this.redisService.del(commandKey);
+      return JSON.parse(commandData);
+    }
+    
+    return null;
   }
 
   async getCurrentStatus(deviceId: string): Promise<any> {

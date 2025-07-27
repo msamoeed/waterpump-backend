@@ -1,6 +1,6 @@
 import { Controller, Post, Get, Body, Param, Query, HttpException, HttpStatus } from '@nestjs/common';
 import { DevicesService } from './devices.service';
-import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
+import { DeviceStatusUpdateDto, PumpCommandDto } from '../../common/dto/device-status-update.dto';
 
 @Controller('devices')
 export class DevicesController {
@@ -40,6 +40,38 @@ export class DevicesController {
     } catch (error) {
       throw new HttpException(
         'Failed to process pump event', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post('pump/control')
+  async controlPump(@Body() pumpCommand: PumpCommandDto) {
+    try {
+      const result = await this.devicesService.handlePumpCommand(pumpCommand);
+      
+      return { 
+        success: true, 
+        message: 'Pump command sent successfully',
+        command: pumpCommand,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      throw new HttpException(
+        'Failed to send pump command', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Get('pump/command/:deviceId')
+  async getPumpCommand(@Param('deviceId') deviceId: string) {
+    try {
+      const command = await this.devicesService.getPumpCommand(deviceId);
+      return command;
+    } catch (error) {
+      throw new HttpException(
+        'Failed to get pump command', 
         HttpStatus.INTERNAL_SERVER_ERROR
       );
     }

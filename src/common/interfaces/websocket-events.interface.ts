@@ -7,7 +7,7 @@ export interface DeviceUpdateEvent {
 }
 
 export interface PumpEvent {
-  event_type: 'pump_start' | 'pump_stop' | 'protection_active' | 'usage_reset';
+  event_type: 'pump_start' | 'pump_stop' | 'protection_active' | 'usage_reset' | 'pump_command';
   pump_on: boolean;
   trigger_reason: string;
   ground_tank_level: number;

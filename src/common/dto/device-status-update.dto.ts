@@ -1,4 +1,4 @@
-import { IsString, IsNumber, IsBoolean, ValidateNested, Min, Max } from 'class-validator';
+import { IsString, IsNumber, IsBoolean, ValidateNested, Min, Max, IsOptional, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class TankDataDto {
@@ -98,4 +98,24 @@ export class DeviceStatusUpdateDto {
   @ValidateNested()
   @Type(() => SystemDataDto)
   system: SystemDataDto;
+}
+
+export class PumpCommandDto {
+  @IsString()
+  @IsOptional()
+  device_id?: string;
+
+  @IsString()
+  @IsIn(['start', 'stop', 'target', 'auto', 'manual'])
+  action: string;
+
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  @Max(100)
+  target_level?: number;
+
+  @IsString()
+  @IsOptional()
+  reason?: string;
 } 
