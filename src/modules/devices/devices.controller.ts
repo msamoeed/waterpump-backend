@@ -305,4 +305,30 @@ export class DevicesController {
       );
     }
   }
+
+  @Get(':deviceId/ota/status')
+  async getOTAStatus(@Param('deviceId') deviceId: string) {
+    try {
+      const status = await this.devicesService.getOTAStatus(deviceId);
+      return status;
+    } catch (error) {
+      throw new HttpException(
+        'Failed to get OTA status', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post(':deviceId/ota/start')
+  async startOTAUpdate(@Param('deviceId') deviceId: string) {
+    try {
+      const result = await this.devicesService.startOTAUpdate(deviceId);
+      return result;
+    } catch (error) {
+      throw new HttpException(
+        'Failed to start OTA update', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 } 

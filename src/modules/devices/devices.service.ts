@@ -5,6 +5,8 @@ import { PostgresService } from '../../database/services/postgres.service';
 import { WebSocketGateway } from '../websocket/websocket.gateway';
 import { DeviceStatusUpdateDto, PumpCommandDto } from '../../common/dto/device-status-update.dto';
 import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interfaces/websocket-events.interface';
+import { HttpException, HttpStatus } from '@nestjs/common';
+import axios from 'axios';
 
 @Injectable()
 export class DevicesService {
@@ -570,5 +572,89 @@ export class DevicesService {
         last_update: roofTankStatus?._time || null
       }
     };
+  }
+
+  async getOTAStatus(deviceId: string): Promise<any> {
+    try {
+      // Get device status from Redis
+      const deviceStatus = await this.redisService.getDeviceStatus(deviceId);
+      if (!deviceStatus) {
+        throw new HttpException('Device not found', HttpStatus.NOT_FOUND);
+      }
+
+      // Try to get OTA status from ESP32
+      const esp32IP = await this.getESP32IP(deviceId);
+      if (!esp32IP) {
+        return {
+          device_id: deviceId,
+          ota_available: false,
+          error: 'ESP32 IP not found'
+        };
+      }
+
+      const response = await axios.get(`http://${esp32IP}:8080/ota/status`, {
+        timeout: 5000
+      });
+
+      return {
+        device_id: deviceId,
+        ota_available: true,
+        ...response.data
+      };
+    } catch (error) {
+      return {
+        device_id: deviceId,
+        ota_available: false,
+        error: error.message
+      };
+    }
+  }
+
+  async startOTAUpdate(deviceId: string): Promise<any> {
+    try {
+      const esp32IP = await this.getESP32IP(deviceId);
+      if (!esp32IP) {
+        throw new HttpException('ESP32 IP not found', HttpStatus.NOT_FOUND);
+      }
+
+      const response = await axios.post(`http://${esp32IP}:8080/ota/start`, {}, {
+        timeout: 5000
+      });
+
+      // Log OTA start event
+      await this.postgresService.insertEventLog({
+        device_id: deviceId,
+        event_type: 'ota_start',
+        message: 'OTA update started via API',
+        severity: 'info',
+      });
+
+      return {
+        device_id: deviceId,
+        status: 'OTA update started',
+        esp32_ip: esp32IP,
+        ota_url: `http://${esp32IP}:8080/update`
+      };
+    } catch (error) {
+      throw new HttpException(
+        `Failed to start OTA update: ${error.message}`, 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  private async getESP32IP(deviceId: string): Promise<string | null> {
+    try {
+      // Get device status from Redis to find IP
+      const deviceStatus = await this.redisService.getDeviceStatus(deviceId);
+      if (deviceStatus) {
+        const status = JSON.parse(deviceStatus);
+        // You might need to store IP in device status or get it from another source
+        return status.ip_address || null;
+      }
+      return null;
+    } catch (error) {
+      return null;
+    }
   }
 } 
