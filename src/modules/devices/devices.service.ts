@@ -9,7 +9,7 @@ import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interface
 @Injectable()
 export class DevicesService {
   constructor(
-    @Inject('INFLUXDB_SERVICE') private influxService: InfluxService,
+    @Inject('INFLUXDB_SERVICE') public influxService: InfluxService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
     @Inject('POSTGRES_SERVICE') private postgresService: PostgresService,
     private websocketGateway: WebSocketGateway,

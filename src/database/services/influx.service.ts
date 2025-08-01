@@ -1,14 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InfluxDB, Point, WriteApi, QueryApi } from '@influxdata/influxdb-client';
+import { InfluxDB, Point } from '@influxdata/influxdb-client';
+import { InfluxDBClient } from '@influxdata/influxdb3-client';
 import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
 
 @Injectable()
 export class InfluxService {
-  private writeApi: WriteApi;
-  private queryApi: QueryApi;
+  private writeApi: any;
+  private queryApi: any;
+  private influx3Client: InfluxDBClient;
 
   constructor(private configService: ConfigService) {
+    // Initialize the old client for writing (keeping compatibility)
     const client = new InfluxDB({
       url: this.configService.get('INFLUXDB_URL') || 'http://localhost:8086',
       token: this.configService.get('INFLUXDB_TOKEN') || 'your-token',
@@ -23,6 +26,13 @@ export class InfluxService {
     this.queryApi = client.getQueryApi(
       this.configService.get('INFLUXDB_ORG') || 'your-org'
     );
+
+    // Initialize the new InfluxDB 3.0 client for SQL queries
+    this.influx3Client = new InfluxDBClient({
+      host: this.configService.get('INFLUXDB_URL') || 'http://localhost:8086',
+      token: this.configService.get('INFLUXDB_TOKEN') || 'your-token',
+      database: this.configService.get('INFLUXDB_BUCKET') || 'waterpump',
+    });
   }
 
   async writeWaterLevels(statusUpdate: DeviceStatusUpdateDto, timestamp: Date): Promise<void> {
@@ -90,176 +100,251 @@ export class InfluxService {
     endTime: string,
     aggregateWindow?: string
   ): Promise<any[]> {
-    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
-    
-    // Use the same query structure as the working InfluxDB UI query
-    let fluxQuery: string;
+    let sqlQuery: string;
     
     if (measurement === 'water_levels') {
-      fluxQuery = `
-        from(bucket: "${bucket}")
-          |> range(start: ${startTime}, stop: ${endTime})
-          |> filter(fn: (r) => r["_measurement"] == "water_levels")
-          |> filter(fn: (r) => r["_field"] == "level_percent" or r["_field"] == "level_inches")
-          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
-          |> filter(fn: (r) => r["tank_id"] == "ground" or r["tank_id"] == "roof")
-          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
-          |> yield(name: "mean")
-      `;
+      if (aggregateWindow) {
+        // Use window function for aggregation
+        sqlQuery = `
+          SELECT 
+            DATE_TRUNC('${aggregateWindow}', time) as time,
+            device_id,
+            tank_id,
+            AVG(level_percent) as level_percent,
+            AVG(level_inches) as level_inches,
+            MAX(CASE WHEN alarm_active THEN 1 ELSE 0 END) as alarm_active,
+            MAX(CASE WHEN connected THEN 1 ELSE 0 END) as connected,
+            MAX(CASE WHEN sensor_working THEN 1 ELSE 0 END) as sensor_working,
+            MAX(CASE WHEN water_supply_on THEN 1 ELSE 0 END) as water_supply_on
+          FROM water_levels 
+          WHERE device_id = '${deviceId}' 
+            AND tank_id IN ('ground', 'roof')
+            AND time >= '${startTime}' 
+            AND time <= '${endTime}'
+          GROUP BY DATE_TRUNC('${aggregateWindow}', time), device_id, tank_id
+          ORDER BY time
+        `;
+      } else {
+        sqlQuery = `
+          SELECT 
+            time,
+            device_id,
+            tank_id,
+            level_percent,
+            level_inches,
+            alarm_active,
+            connected,
+            sensor_working,
+            water_supply_on
+          FROM water_levels 
+          WHERE device_id = '${deviceId}' 
+            AND tank_id IN ('ground', 'roof')
+            AND time >= '${startTime}' 
+            AND time <= '${endTime}'
+          ORDER BY time
+        `;
+      }
     } else if (measurement === 'pump_metrics') {
-      // For pump metrics, only aggregate numeric fields
-      fluxQuery = `
-        from(bucket: "${bucket}")
-          |> range(start: ${startTime}, stop: ${endTime})
-          |> filter(fn: (r) => r["_measurement"] == "pump_metrics")
-          |> filter(fn: (r) => r["_field"] == "current_amps" or r["_field"] == "power_watts" or r["_field"] == "running")
-          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
-          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
-          |> yield(name: "mean")
-      `;
+      if (aggregateWindow) {
+        sqlQuery = `
+          SELECT 
+            DATE_TRUNC('${aggregateWindow}', time) as time,
+            device_id,
+            AVG(current_amps) as current_amps,
+            AVG(power_watts) as power_watts,
+            AVG(daily_consumption) as daily_consumption,
+            AVG(hourly_consumption) as hourly_consumption,
+            MAX(CASE WHEN running THEN 1 ELSE 0 END) as running,
+            MAX(CASE WHEN protection_active THEN 1 ELSE 0 END) as protection_active,
+            AVG(runtime_minutes) as runtime_minutes,
+            AVG(total_runtime_hours) as total_runtime_hours
+          FROM pump_metrics 
+          WHERE device_id = '${deviceId}' 
+            AND time >= '${startTime}' 
+            AND time <= '${endTime}'
+          GROUP BY DATE_TRUNC('${aggregateWindow}', time), device_id
+          ORDER BY time
+        `;
+      } else {
+        sqlQuery = `
+          SELECT 
+            time,
+            device_id,
+            current_amps,
+            power_watts,
+            daily_consumption,
+            hourly_consumption,
+            running,
+            protection_active,
+            runtime_minutes,
+            total_runtime_hours
+          FROM pump_metrics 
+          WHERE device_id = '${deviceId}' 
+            AND time >= '${startTime}' 
+            AND time <= '${endTime}'
+          ORDER BY time
+        `;
+      }
     } else {
       // For other measurements, use simple query
-      fluxQuery = `
-        from(bucket: "${bucket}")
-          |> range(start: ${startTime}, stop: ${endTime})
-          |> filter(fn: (r) => r._measurement == "${measurement}")
-          |> filter(fn: (r) => r.device_id == "${deviceId}")
-          |> sort(columns: ["_time"])
-          |> yield(name: "raw_data")
+      sqlQuery = `
+        SELECT * FROM ${measurement} 
+        WHERE device_id = '${deviceId}' 
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+        ORDER BY time
       `;
     }
 
-    console.log(`[DEBUG] InfluxDB Query: ${fluxQuery}`);
+    console.log(`[DEBUG] InfluxDB SQL Query: ${sqlQuery}`);
 
-    const result = [];
-    await this.queryApi.queryRows(fluxQuery, {
-      next(row, tableMeta) {
-        const record = tableMeta.toObject(row);
-        result.push(record);
-      },
-      error(error) {
-        console.error('InfluxDB query error:', error);
-        throw error;
-      },
-      complete() {
-        // Query completed successfully
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
       }
-    });
-
-    console.log(`[DEBUG] InfluxDB Result: ${result.length} records found`);
-    return result;
+      console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found`);
+      return result;
+    } catch (error) {
+      console.error('InfluxDB SQL query error:', error);
+      throw error;
+    }
   }
 
   async getLatestDeviceData(deviceId: string): Promise<any> {
-    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
-    const fluxQuery = `
-      from(bucket: "${bucket}")
-        |> range(start: -1h)
-        |> filter(fn: (r) => r.device_id == "${deviceId}")
-        |> last()
+    const sqlQuery = `
+      SELECT 
+        time,
+        device_id,
+        tank_id,
+        level_percent,
+        level_inches,
+        current_amps,
+        power_watts,
+        running
+      FROM (
+        SELECT 
+          time,
+          device_id,
+          tank_id,
+          level_percent,
+          level_inches,
+          NULL as current_amps,
+          NULL as power_watts,
+          NULL as running
+        FROM water_levels 
+        WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+        UNION ALL
+        SELECT 
+          time,
+          device_id,
+          NULL as tank_id,
+          NULL as level_percent,
+          NULL as level_inches,
+          current_amps,
+          power_watts,
+          running
+        FROM pump_metrics 
+        WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+      ) combined_data
+      ORDER BY time DESC
+      LIMIT 1
     `;
 
-    const result = [];
-    await this.queryApi.queryRows(fluxQuery, {
-      next(row, tableMeta) {
-        const record = tableMeta.toObject(row);
-        result.push(record);
-      },
-      error(error) {
-        console.error('InfluxDB query error:', error);
-        throw error;
-      },
-      complete() {
-        // Query completed successfully
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
       }
-    });
+      return result;
+    } catch (error) {
+      console.error('InfluxDB latest data query error:', error);
+      throw error;
+    }
+  }
 
-    return result;
+  // Public method to access the SQL client for testing
+  getSQLClient() {
+    return this.influx3Client;
   }
 
   async getWaterSupplyDuration(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
-    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
-    
-    // Query to get water supply state changes
-    const fluxQuery = `
-      from(bucket: "${bucket}")
-        |> range(start: ${startTime}, stop: ${endTime})
-        |> filter(fn: (r) => r["_measurement"] == "water_levels")
-        |> filter(fn: (r) => r["_field"] == "water_supply_on")
-        |> filter(fn: (r) => r["device_id"] == "${deviceId}")
-        |> filter(fn: (r) => r["tank_id"] == "${tankId}")
-        |> sort(columns: ["_time"])
+    const sqlQuery = `
+      SELECT 
+        time,
+        device_id,
+        tank_id,
+        water_supply_on
+      FROM water_levels 
+      WHERE device_id = '${deviceId}' 
+        AND tank_id = '${tankId}'
+        AND time >= '${startTime}' 
+        AND time <= '${endTime}'
+      ORDER BY time
     `;
 
-    const results: any[] = [];
-    
-    const result = [];
-    await this.queryApi.queryRows(fluxQuery, {
-      next(row, tableMeta) {
-        const record = tableMeta.toObject(row);
-        result.push(record);
-      },
-      error(error) {
-        console.error('InfluxDB water supply query error:', error);
-        throw error;
-      },
-      complete() {
-        // Query completed successfully
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
       }
-    });
-
-    // Process the results to calculate durations
-    const sessions = [];
-    let currentSession = null;
-    
-    for (let i = 0; i < result.length; i++) {
-      const record = result[i];
-      const isSupplyOn = record._value === true;
-      const timestamp = new Date(record._time);
       
-      if (isSupplyOn && !currentSession) {
-        // Start of a new session
-        currentSession = {
-          start_time: timestamp,
-          end_time: null,
-          duration_minutes: 0
-        };
-      } else if (!isSupplyOn && currentSession) {
-        // End of current session
-        currentSession.end_time = timestamp;
+      // Process the results to calculate durations
+      const sessions = [];
+      let currentSession = null;
+      
+      for (let i = 0; i < result.length; i++) {
+        const record = result[i];
+        const isSupplyOn = record.water_supply_on === true;
+        const timestamp = new Date(record.time);
+        
+        if (isSupplyOn && !currentSession) {
+          // Start of a new session
+          currentSession = {
+            start_time: timestamp,
+            end_time: null,
+            duration_minutes: 0
+          };
+        } else if (!isSupplyOn && currentSession) {
+          // End of current session
+          currentSession.end_time = timestamp;
+          currentSession.duration_minutes = Math.floor(
+            (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+          );
+          sessions.push(currentSession);
+          currentSession = null;
+        }
+      }
+      
+      // Handle case where session is still active at the end of the time range
+      if (currentSession) {
+        currentSession.end_time = new Date(endTime);
         currentSession.duration_minutes = Math.floor(
-          (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+          (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
         );
         sessions.push(currentSession);
-        currentSession = null;
       }
+      
+      // Calculate statistics
+      const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
+      const totalSessions = sessions.length;
+      const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
+      const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
+      const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
+      
+      return {
+        sessions: sessions,
+        stats: {
+          total_duration_hours: totalDurationMinutes / 60,
+          total_sessions: totalSessions,
+          avg_duration_minutes: avgDurationMinutes,
+          max_duration_minutes: maxDurationMinutes,
+          min_duration_minutes: minDurationMinutes
+        }
+      };
+    } catch (error) {
+      console.error('InfluxDB water supply query error:', error);
+      throw error;
     }
-    
-    // Handle case where session is still active at the end of the time range
-    if (currentSession) {
-      currentSession.end_time = new Date(endTime);
-      currentSession.duration_minutes = Math.floor(
-        (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
-      );
-      sessions.push(currentSession);
-    }
-    
-    // Calculate statistics
-    const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
-    const totalSessions = sessions.length;
-    const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
-    const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
-    const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
-    
-    return {
-      sessions: sessions,
-      stats: {
-        total_duration_hours: totalDurationMinutes / 60,
-        total_sessions: totalSessions,
-        avg_duration_minutes: avgDurationMinutes,
-        max_duration_minutes: maxDurationMinutes,
-        min_duration_minutes: minDurationMinutes
-      }
-    };
   }
 } 

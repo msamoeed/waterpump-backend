@@ -230,6 +230,44 @@ export class DevicesController {
     }
   }
 
+  @Get('debug/sql')
+  async debugSQL() {
+    try {
+      // Test simple SQL query
+      const sqlQuery = `
+        SELECT 
+          time,
+          device_id,
+          tank_id,
+          level_percent,
+          level_inches
+        FROM water_levels 
+        WHERE device_id = 'esp32_controller_001' 
+          AND time >= NOW() - INTERVAL '1 hour'
+        ORDER BY time DESC
+        LIMIT 5
+      `;
+      
+      const result = [];
+      for await (const row of this.devicesService.influxService.getSQLClient().query(sqlQuery)) {
+        result.push(row);
+      }
+      
+      return {
+        sqlQuery,
+        recordsFound: result.length,
+        sampleData: result.slice(0, 3),
+        allData: result
+      };
+    } catch (error) {
+      console.error('[DEBUG] SQL Debug Error:', error);
+      return {
+        error: error.message,
+        stack: error.stack
+      };
+    }
+  }
+
   @Get(':deviceId/water-supply/sessions')
   async getWaterSupplySessions(
     @Param('deviceId') deviceId: string,
