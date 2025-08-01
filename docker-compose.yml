@@ -29,7 +29,7 @@ services:
 
   # InfluxDB 3.0 Time Series Database
   influxdb:
-    image: influxdb:3.0-alpine
+    image: influxdb:3.3-core
     container_name: waterpump-influxdb
     environment:
       INFLUXDB_DATABASE: ${INFLUXDB_BUCKET:-waterpump}
