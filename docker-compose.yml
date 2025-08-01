@@ -27,10 +27,15 @@ services:
       - waterpump-network
     restart: unless-stopped
 
-  # InfluxDB 3.0 Time Series Database
+  # InfluxDB 3.3 Core Time Series Database
   influxdb:
     image: influxdb:3.3-core
     container_name: waterpump-influxdb
+    command: >
+      --object-store file
+      --node-id waterpump-node
+      --http-bind-address :8086
+      --log-level info
     environment:
       INFLUXDB_DATABASE: ${INFLUXDB_BUCKET:-waterpump}
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
