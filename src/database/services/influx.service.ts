@@ -207,8 +207,79 @@ export class InfluxService {
       return result;
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
-      throw error;
+      // Fallback to Flux query if SQL fails
+      return this.queryHistoricalDataFlux(deviceId, measurement, startTime, endTime, aggregateWindow);
     }
+  }
+
+  // Fallback method using Flux queries for InfluxDB 2.x compatibility
+  private async queryHistoricalDataFlux(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow?: string
+  ): Promise<any[]> {
+    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    
+    let fluxQuery: string;
+    
+    if (measurement === 'water_levels') {
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r["_measurement"] == "water_levels")
+          |> filter(fn: (r) => r["_field"] == "level_percent" or r["_field"] == "level_inches")
+          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+          |> filter(fn: (r) => r["tank_id"] == "ground" or r["tank_id"] == "roof")
+          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
+          |> yield(name: "mean")
+      `;
+    } else if (measurement === 'pump_metrics') {
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r["_measurement"] == "pump_metrics")
+          |> filter(fn: (r) => r["_field"] == "current_amps" or r["_field"] == "power_watts" or r["_field"] == "running")
+          |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+          ${aggregateWindow ? `|> aggregateWindow(every: ${aggregateWindow}, fn: mean, createEmpty: false)` : ''}
+          |> yield(name: "mean")
+      `;
+    } else {
+      fluxQuery = `
+        from(bucket: "${bucket}")
+          |> range(start: ${startTime}, stop: ${endTime})
+          |> filter(fn: (r) => r._measurement == "${measurement}")
+          |> filter(fn: (r) => r.device_id == "${deviceId}")
+          |> sort(columns: ["_time"])
+          |> yield(name: "raw_data")
+      `;
+    }
+
+    console.log(`[DEBUG] InfluxDB Flux Query (fallback): ${fluxQuery}`);
+
+    const result = [];
+    await this.queryApi.queryRows(fluxQuery, {
+      next(row, tableMeta) {
+        const record = tableMeta.toObject(row);
+        result.push(record);
+      },
+      error(error) {
+        console.error('InfluxDB Flux query error:', error);
+        throw error;
+      },
+      complete() {
+        // Query completed successfully
+      }
+    });
+
+    console.log(`[DEBUG] InfluxDB Flux Result: ${result.length} records found`);
+    return result;
+  }
+
+  // Public method to access the SQL client for testing
+  getSQLClient() {
+    return this.influx3Client;
   }
 
   async getLatestDeviceData(deviceId: string): Promise<any> {
@@ -259,13 +330,37 @@ export class InfluxService {
       return result;
     } catch (error) {
       console.error('InfluxDB latest data query error:', error);
-      throw error;
+      // Fallback to Flux query
+      return this.getLatestDeviceDataFlux(deviceId);
     }
   }
 
-  // Public method to access the SQL client for testing
-  getSQLClient() {
-    return this.influx3Client;
+  // Fallback method for latest device data
+  private async getLatestDeviceDataFlux(deviceId: string): Promise<any> {
+    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    const fluxQuery = `
+      from(bucket: "${bucket}")
+        |> range(start: -1h)
+        |> filter(fn: (r) => r.device_id == "${deviceId}")
+        |> last()
+    `;
+
+    const result = [];
+    await this.queryApi.queryRows(fluxQuery, {
+      next(row, tableMeta) {
+        const record = tableMeta.toObject(row);
+        result.push(record);
+      },
+      error(error) {
+        console.error('InfluxDB query error:', error);
+        throw error;
+      },
+      complete() {
+        // Query completed successfully
+      }
+    });
+
+    return result;
   }
 
   async getWaterSupplyDuration(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
@@ -344,7 +439,92 @@ export class InfluxService {
       };
     } catch (error) {
       console.error('InfluxDB water supply query error:', error);
-      throw error;
+      // Fallback to Flux query
+      return this.getWaterSupplyDurationFlux(deviceId, tankId, startTime, endTime);
     }
+  }
+
+  // Fallback method for water supply duration
+  private async getWaterSupplyDurationFlux(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
+    const bucket = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    
+    const fluxQuery = `
+      from(bucket: "${bucket}")
+        |> range(start: ${startTime}, stop: ${endTime})
+        |> filter(fn: (r) => r["_measurement"] == "water_levels")
+        |> filter(fn: (r) => r["_field"] == "water_supply_on")
+        |> filter(fn: (r) => r["device_id"] == "${deviceId}")
+        |> filter(fn: (r) => r["tank_id"] == "${tankId}")
+        |> sort(columns: ["_time"])
+    `;
+
+    const result = [];
+    await this.queryApi.queryRows(fluxQuery, {
+      next(row, tableMeta) {
+        const record = tableMeta.toObject(row);
+        result.push(record);
+      },
+      error(error) {
+        console.error('InfluxDB water supply query error:', error);
+        throw error;
+      },
+      complete() {
+        // Query completed successfully
+      }
+    });
+
+    // Process the results to calculate durations
+    const sessions = [];
+    let currentSession = null;
+    
+    for (let i = 0; i < result.length; i++) {
+      const record = result[i];
+      const isSupplyOn = record._value === true;
+      const timestamp = new Date(record._time);
+      
+      if (isSupplyOn && !currentSession) {
+        // Start of a new session
+        currentSession = {
+          start_time: timestamp,
+          end_time: null,
+          duration_minutes: 0
+        };
+      } else if (!isSupplyOn && currentSession) {
+        // End of current session
+        currentSession.end_time = timestamp;
+        currentSession.duration_minutes = Math.floor(
+          (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+        );
+        sessions.push(currentSession);
+        currentSession = null;
+      }
+    }
+    
+    // Handle case where session is still active at the end of the time range
+    if (currentSession) {
+      currentSession.end_time = new Date(endTime);
+      currentSession.duration_minutes = Math.floor(
+        (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+      );
+      sessions.push(currentSession);
+    }
+    
+    // Calculate statistics
+    const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
+    const totalSessions = sessions.length;
+    const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
+    const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
+    const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
+    
+    return {
+      sessions: sessions,
+      stats: {
+        total_duration_hours: totalDurationMinutes / 60,
+        total_sessions: totalSessions,
+        avg_duration_minutes: avgDurationMinutes,
+        max_duration_minutes: maxDurationMinutes,
+        min_duration_minutes: minDurationMinutes
+      }
+    };
   }
 } 
