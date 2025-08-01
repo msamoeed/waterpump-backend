@@ -32,18 +32,17 @@ services:
     image: influxdb:3.3-core
     container_name: waterpump-influxdb
     command: >
-      --object-store file
-      --node-id waterpump-node
-      --http-bind-address :8086
-      --log-level info
-    environment:
-      INFLUXDB_DATABASE: ${INFLUXDB_BUCKET:-waterpump}
-      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
-      INFLUXDB_ORG: ${INFLUXDB_ORG:-waterpump-org}
+      influxdb3
+      serve
+      --node-id=node0
+      --object-store=file
+      --data-dir=/var/lib/influxdb3/data
+      --plugin-dir=/var/lib/influxdb3/plugins
     ports:
-      - "${INFLUXDB_PORT:-8087}:8086"
+      - "${INFLUXDB_PORT:-8087}:8181"
     volumes:
       - influxdb_data:/var/lib/influxdb3
+    user: "1000:1000"
     networks:
       - waterpump-network
     restart: unless-stopped
@@ -66,7 +65,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-waterpump}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      INFLUXDB_URL: http://influxdb:8086
+      INFLUXDB_URL: http://influxdb:8181
       INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
       INFLUXDB_ORG: ${INFLUXDB_ORG:-waterpump-org}
       INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-waterpump}
