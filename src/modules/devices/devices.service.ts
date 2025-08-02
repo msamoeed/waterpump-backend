@@ -457,9 +457,9 @@ export class DevicesService {
     // Create a map to store data by timestamp
     const timeMap = new Map<string, any>();
 
-    // Process water levels data (raw InfluxDB format)
+    // Process water levels data (InfluxDB 3.x format)
     waterLevelsData.forEach(record => {
-      const timestamp = record._time;
+      const timestamp = record.time;
       if (!timeMap.has(timestamp)) {
         timeMap.set(timestamp, {
           time: timestamp,
@@ -473,19 +473,17 @@ export class DevicesService {
 
       const dataPoint = timeMap.get(timestamp);
       
-      // Handle different field types from InfluxDB
-      if (record._field === 'level_percent') {
-        if (record.tank_id === 'ground') {
-          dataPoint.groundLevel = record._value || 0;
-        } else if (record.tank_id === 'roof') {
-          dataPoint.roofLevel = record._value || 0;
-        }
+      // Handle water levels data (InfluxDB 3.x format)
+      if (record.tank_id === 'ground') {
+        dataPoint.groundLevel = record.level_percent || 0;
+      } else if (record.tank_id === 'roof') {
+        dataPoint.roofLevel = record.level_percent || 0;
       }
     });
 
-    // Process pump metrics data (raw InfluxDB format)
+    // Process pump metrics data (InfluxDB 3.x format)
     pumpMetricsData.forEach(record => {
-      const timestamp = record._time;
+      const timestamp = record.time;
       if (!timeMap.has(timestamp)) {
         timeMap.set(timestamp, {
           time: timestamp,
@@ -499,14 +497,10 @@ export class DevicesService {
 
       const dataPoint = timeMap.get(timestamp);
       
-      // Handle different field types from InfluxDB
-      if (record._field === 'running') {
-        dataPoint.pumpStatus = record._value ? 1 : 0;
-      } else if (record._field === 'power_watts') {
-        dataPoint.pumpPower = record._value || 0;
-      } else if (record._field === 'current_amps') {
-        dataPoint.pumpCurrent = record._value || 0;
-      }
+      // Handle pump metrics data (InfluxDB 3.x format)
+      dataPoint.pumpStatus = record.running ? 1 : 0;
+      dataPoint.pumpPower = record.power_watts || 0;
+      dataPoint.pumpCurrent = record.current_amps || 0;
     });
 
     // Convert map to array and sort by timestamp
