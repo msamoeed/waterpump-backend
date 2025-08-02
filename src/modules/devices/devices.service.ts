@@ -231,6 +231,8 @@ export class DevicesService {
     aggregateWindow: string
   ): Promise<any[]> {
     try {
+      console.log(`[DEBUG] getTimeSeriesData called with: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}, aggregateWindow=${aggregateWindow}`);
+      
       // Get water levels data
       const waterLevelsData = await this.influxService.queryHistoricalData(
         deviceId,
@@ -239,6 +241,11 @@ export class DevicesService {
         endTime,
         aggregateWindow
       );
+
+      console.log(`[DEBUG] Water levels data returned: ${waterLevelsData.length} records`);
+      if (waterLevelsData.length > 0) {
+        console.log(`[DEBUG] Sample water level record:`, waterLevelsData[0]);
+      }
 
       // Get pump metrics data
       const pumpMetricsData = await this.influxService.queryHistoricalData(
@@ -249,8 +256,18 @@ export class DevicesService {
         aggregateWindow
       );
 
+      console.log(`[DEBUG] Pump metrics data returned: ${pumpMetricsData.length} records`);
+      if (pumpMetricsData.length > 0) {
+        console.log(`[DEBUG] Sample pump metric record:`, pumpMetricsData[0]);
+      }
+
       // Process and format the data for the frontend
       const processedData = this.processTimeSeriesData(waterLevelsData, pumpMetricsData);
+      
+      console.log(`[DEBUG] Processed data returned: ${processedData.length} records`);
+      if (processedData.length > 0) {
+        console.log(`[DEBUG] Sample processed record:`, processedData[0]);
+      }
       
       return processedData;
     } catch (error) {

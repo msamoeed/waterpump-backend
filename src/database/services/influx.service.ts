@@ -8,23 +8,30 @@ export class InfluxService {
   private influx3Client: InfluxDBClient;
 
   constructor(private configService: ConfigService) {
-    // Initialize InfluxDB 3.3 Core client
-    // For InfluxDB 3.3 Core, we need to use the correct configuration
-    const host = this.configService.get('INFLUXDB_URL') || 'http://localhost:8087';
-    const token = this.configService.get('INFLUXDB_TOKEN') || 'dummy-token-for-no-auth-mode';
-    const database = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+    try {
+      // Initialize InfluxDB 3.3 Core client
+      // For InfluxDB 3.3 Core, we need to use the correct configuration
+      const host = this.configService.get('INFLUXDB_URL') || 'http://localhost:8087';
+      const token = this.configService.get('INFLUXDB_TOKEN') || 'dummy-token-for-no-auth-mode';
+      const database = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
 
-    console.log(`[DEBUG] InfluxDB 3.3 Configuration:`, {
-      host,
-      database,
-      token: token ? '***' : 'not set (no-auth mode)'
-    });
+      console.log(`[DEBUG] InfluxDB 3.3 Configuration:`, {
+        host,
+        database,
+        token: token ? '***' : 'not set (no-auth mode)'
+      });
 
-    this.influx3Client = new InfluxDBClient({
-      host,
-      token,
-      database,
-    });
+      this.influx3Client = new InfluxDBClient({
+        host,
+        token,
+        database,
+      });
+
+      console.log(`[DEBUG] InfluxDB client created successfully`);
+    } catch (error) {
+      console.error('[ERROR] Failed to initialize InfluxDB client:', error);
+      throw new Error(`InfluxDB initialization failed: ${error.message}`);
+    }
   }
 
   async writeWaterLevels(statusUpdate: DeviceStatusUpdateDto, timestamp: Date): Promise<void> {
@@ -230,6 +237,9 @@ export class InfluxService {
 
   // Public method to access the SQL client for testing
   getSQLClient() {
+    if (!this.influx3Client) {
+      throw new Error('InfluxDB client not initialized');
+    }
     return this.influx3Client;
   }
 
