@@ -860,4 +860,57 @@ export class DevicesController {
       };
     }
   }
+
+  @Get(':deviceId/debug/direct-query')
+  async getDirectQuery(
+    @Param('deviceId') deviceId: string
+  ) {
+    try {
+      console.log(`[DEBUG] Direct query for deviceId: ${deviceId}`);
+      
+      // Direct query to check if device exists
+      const deviceQuery = `SELECT device_id, COUNT(*) as record_count FROM water_levels WHERE device_id = '${deviceId}' GROUP BY device_id`;
+      
+      const deviceResult = [];
+      for await (const row of this.devicesService.influxService.getSQLClient().query(deviceQuery)) {
+        deviceResult.push(row);
+      }
+      
+      // Direct query to get sample data
+      const sampleQuery = `SELECT * FROM water_levels WHERE device_id = '${deviceId}' ORDER BY time DESC LIMIT 3`;
+      
+      const sampleResult = [];
+      for await (const row of this.devicesService.influxService.getSQLClient().query(sampleQuery)) {
+        sampleResult.push(row);
+      }
+      
+      // Direct query to check pump metrics
+      const pumpQuery = `SELECT * FROM pump_metrics WHERE device_id = '${deviceId}' ORDER BY time DESC LIMIT 3`;
+      
+      const pumpResult = [];
+      for await (const row of this.devicesService.influxService.getSQLClient().query(pumpQuery)) {
+        pumpResult.push(row);
+      }
+      
+      return {
+        deviceId,
+        deviceExists: deviceResult.length > 0,
+        deviceInfo: deviceResult,
+        waterLevelsData: {
+          count: sampleResult.length,
+          data: sampleResult
+        },
+        pumpMetricsData: {
+          count: pumpResult.length,
+          data: pumpResult
+        }
+      };
+    } catch (error) {
+      console.error('[DEBUG] Direct Query Error:', error);
+      return {
+        error: error.message,
+        stack: error.stack
+      };
+    }
+  }
 } 
