@@ -1,96 +1,103 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InfluxDB, Point } from '@influxdata/influxdb-client';
-import { InfluxDBClient } from '@influxdata/influxdb3-client';
+import { InfluxDBClient, Point } from '@influxdata/influxdb3-client';
 import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
 
 @Injectable()
 export class InfluxService {
-  private writeApi: any;
-  private queryApi: any;
   private influx3Client: InfluxDBClient;
 
   constructor(private configService: ConfigService) {
-    // Initialize the old client for writing (keeping compatibility)
-    const client = new InfluxDB({
-      url: this.configService.get('INFLUXDB_URL') || 'http://localhost:8086',
-      token: this.configService.get('INFLUXDB_TOKEN') || 'your-token',
+    // Initialize InfluxDB 3.3 Core client
+    // For InfluxDB 3.3 Core, we need to use the correct configuration
+    const host = this.configService.get('INFLUXDB_URL') || 'http://localhost:8087';
+    const token = this.configService.get('INFLUXDB_TOKEN') || 'dummy-token-for-no-auth-mode';
+    const database = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
+
+    console.log(`[DEBUG] InfluxDB 3.3 Configuration:`, {
+      host,
+      database,
+      token: token ? '***' : 'not set (no-auth mode)'
     });
 
-    this.writeApi = client.getWriteApi(
-      this.configService.get('INFLUXDB_ORG') || 'your-org',
-      this.configService.get('INFLUXDB_BUCKET') || 'waterpump',
-      'ns'
-    );
-
-    this.queryApi = client.getQueryApi(
-      this.configService.get('INFLUXDB_ORG') || 'your-org'
-    );
-
-    // Initialize the new InfluxDB 3.0 client for SQL queries
     this.influx3Client = new InfluxDBClient({
-      host: this.configService.get('INFLUXDB_URL') || 'http://localhost:8086',
-      token: this.configService.get('INFLUXDB_TOKEN') || 'your-token',
-      database: this.configService.get('INFLUXDB_BUCKET') || 'waterpump',
+      host,
+      token,
+      database,
     });
   }
 
   async writeWaterLevels(statusUpdate: DeviceStatusUpdateDto, timestamp: Date): Promise<void> {
     const points = [
-      new Point('water_levels')
-        .tag('device_id', statusUpdate.device_id)
-        .tag('tank_id', 'ground')
-        .floatField('level_percent', statusUpdate.ground_tank.level_percent)
-        .floatField('level_inches', statusUpdate.ground_tank.level_inches)
-        .booleanField('alarm_active', statusUpdate.ground_tank.alarm_active)
-        .booleanField('connected', statusUpdate.ground_tank.connected)
-        .booleanField('sensor_working', statusUpdate.ground_tank.sensor_working)
-        .booleanField('water_supply_on', statusUpdate.ground_tank.water_supply_on)
-        .timestamp(timestamp),
+      Point.measurement('water_levels')
+        .setTag('device_id', statusUpdate.device_id)
+        .setTag('tank_id', 'ground')
+        .setFloatField('level_percent', statusUpdate.ground_tank.level_percent)
+        .setFloatField('level_inches', statusUpdate.ground_tank.level_inches)
+        .setBooleanField('alarm_active', statusUpdate.ground_tank.alarm_active)
+        .setBooleanField('connected', statusUpdate.ground_tank.connected)
+        .setBooleanField('sensor_working', statusUpdate.ground_tank.sensor_working)
+        .setBooleanField('water_supply_on', statusUpdate.ground_tank.water_supply_on)
+        .setTimestamp(timestamp),
 
-      new Point('water_levels')
-        .tag('device_id', statusUpdate.device_id)
-        .tag('tank_id', 'roof')
-        .floatField('level_percent', statusUpdate.roof_tank.level_percent)
-        .floatField('level_inches', statusUpdate.roof_tank.level_inches)
-        .booleanField('alarm_active', statusUpdate.roof_tank.alarm_active)
-        .booleanField('connected', statusUpdate.roof_tank.connected)
-        .booleanField('sensor_working', statusUpdate.roof_tank.sensor_working)
-        .booleanField('water_supply_on', statusUpdate.roof_tank.water_supply_on)
-        .timestamp(timestamp),
+      Point.measurement('water_levels')
+        .setTag('device_id', statusUpdate.device_id)
+        .setTag('tank_id', 'roof')
+        .setFloatField('level_percent', statusUpdate.roof_tank.level_percent)
+        .setFloatField('level_inches', statusUpdate.roof_tank.level_inches)
+        .setBooleanField('alarm_active', statusUpdate.roof_tank.alarm_active)
+        .setBooleanField('connected', statusUpdate.roof_tank.connected)
+        .setBooleanField('sensor_working', statusUpdate.roof_tank.sensor_working)
+        .setBooleanField('water_supply_on', statusUpdate.roof_tank.water_supply_on)
+        .setTimestamp(timestamp),
     ];
 
-    this.writeApi.writePoints(points);
-    await this.writeApi.flush();
+    try {
+      await this.influx3Client.write(points);
+      console.log(`[DEBUG] Wrote ${points.length} water level points`);
+    } catch (error) {
+      console.error('Error writing water levels:', error);
+      throw error;
+    }
   }
 
   async writePumpMetrics(statusUpdate: DeviceStatusUpdateDto, timestamp: Date): Promise<void> {
-    const point = new Point('pump_metrics')
-      .tag('device_id', statusUpdate.device_id)
-      .floatField('current_amps', statusUpdate.pump.current_amps)
-      .floatField('power_watts', statusUpdate.pump.power_watts)
-      .floatField('daily_consumption', statusUpdate.pump.daily_consumption)
-      .floatField('hourly_consumption', statusUpdate.pump.hourly_consumption)
-      .booleanField('running', statusUpdate.pump.running)
-      .booleanField('protection_active', statusUpdate.pump.protection_active)
-      .intField('runtime_minutes', statusUpdate.pump.runtime_minutes)
-      .intField('total_runtime_hours', statusUpdate.pump.total_runtime_hours)
-      .timestamp(timestamp);
+    const point = Point.measurement('pump_metrics')
+      .setTag('device_id', statusUpdate.device_id)
+      .setFloatField('current_amps', statusUpdate.pump.current_amps)
+      .setFloatField('power_watts', statusUpdate.pump.power_watts)
+      .setFloatField('daily_consumption', statusUpdate.pump.daily_consumption)
+      .setFloatField('hourly_consumption', statusUpdate.pump.hourly_consumption)
+      .setBooleanField('running', statusUpdate.pump.running)
+      .setBooleanField('protection_active', statusUpdate.pump.protection_active)
+      .setIntegerField('runtime_minutes', statusUpdate.pump.runtime_minutes)
+      .setIntegerField('total_runtime_hours', statusUpdate.pump.total_runtime_hours)
+      .setTimestamp(timestamp);
 
-    this.writeApi.writePoint(point);
-    await this.writeApi.flush();
+    try {
+      await this.influx3Client.write([point]);
+      console.log(`[DEBUG] Wrote pump metrics point`);
+    } catch (error) {
+      console.error('Error writing pump metrics:', error);
+      throw error;
+    }
   }
 
   async writeSystemEvent(deviceId: string, eventType: string, description: string, severity: string, timestamp: Date): Promise<void> {
-    const point = new Point('system_events')
-      .tag('device_id', deviceId)
-      .tag('event_type', eventType)
-      .tag('severity', severity)
-      .stringField('description', description)
-      .timestamp(timestamp);
+    const point = Point.measurement('system_events')
+      .setTag('device_id', deviceId)
+      .setTag('event_type', eventType)
+      .setTag('severity', severity)
+      .setStringField('description', description)
+      .setTimestamp(timestamp);
 
-    this.writeApi.writePoint(point);
-    await this.writeApi.flush();
+    try {
+      await this.influx3Client.write([point]);
+      console.log(`[DEBUG] Wrote system event point`);
+    } catch (error) {
+      console.error('Error writing system event:', error);
+      throw error;
+    }
   }
 
   async queryHistoricalData(

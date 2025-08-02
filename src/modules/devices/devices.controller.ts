@@ -233,7 +233,7 @@ export class DevicesController {
   @Get('debug/sql')
   async debugSQL() {
     try {
-      // Test simple SQL query
+      // Test simple SQL query to check if data exists
       const sqlQuery = `
         SELECT 
           time,
@@ -242,7 +242,7 @@ export class DevicesController {
           level_percent,
           level_inches
         FROM water_levels 
-        WHERE device_id = 'esp32_controller_001' 
+        WHERE device_id = 'test_device_001' 
           AND time >= NOW() - INTERVAL '1 hour'
         ORDER BY time DESC
         LIMIT 5
@@ -253,7 +253,19 @@ export class DevicesController {
         result.push(row);
       }
       
+      if (result.length === 0) {
+        return {
+          status: 'No data found',
+          message: 'The water_levels table exists but has no recent data.',
+          suggestion: 'Try sending some device data or check for older data.',
+          sqlQuery,
+          recordsFound: 0,
+          sampleData: []
+        };
+      }
+      
       return {
+        status: 'Success',
         sqlQuery,
         recordsFound: result.length,
         sampleData: result.slice(0, 3),
@@ -261,7 +273,19 @@ export class DevicesController {
       };
     } catch (error) {
       console.error('[DEBUG] SQL Debug Error:', error);
+      
+      // Check if it's a "table not found" error
+      if (error.message && error.message.includes('table') && error.message.includes('not found')) {
+        return {
+          status: 'Table not found',
+          message: 'The water_levels table does not exist yet.',
+          suggestion: 'Send some device data to create the first measurements.',
+          error: error.message
+        };
+      }
+      
       return {
+        status: 'Error',
         error: error.message,
         stack: error.stack
       };
