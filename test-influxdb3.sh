@@ -17,7 +17,7 @@ echo "🔍 Testing API endpoints..."
 
 # Test SQL debug endpoint
 echo "📊 Testing SQL debug endpoint..."
-SQL_RESPONSE=$(curl -s http://localhost:3002/devices/debug/sql)
+SQL_RESPONSE=$(curl -s http://localhost:3002/api/v1/devices/debug/sql)
 if echo "$SQL_RESPONSE" | grep -q "recordsFound"; then
     echo "✅ SQL debug endpoint working"
     echo "   Records found: $(echo "$SQL_RESPONSE" | grep -o '"recordsFound":[0-9]*' | cut -d: -f2)"
@@ -27,8 +27,8 @@ fi
 
 # Test time series endpoint
 echo "📈 Testing time series endpoint..."
-TIMESERIES_RESPONSE=$(curl -s http://localhost:3002/devices/esp32_controller_001/timeseries)
-if echo "$TIMESERIES_RESPONSE" | grep -q "recordsFound\|length"; then
+TIMESERIES_RESPONSE=$(curl -s http://localhost:3002/api/v1/devices/esp32_controller_001/timeseries)
+if echo "$TIMESERIES_RESPONSE" | grep -q "recordsFound\|length\|groundLevel"; then
     echo "✅ Time series endpoint working"
 else
     echo "⚠️  Time series endpoint returned: $TIMESERIES_RESPONSE"
@@ -36,7 +36,7 @@ fi
 
 # Test system stats
 echo "📊 Testing system stats endpoint..."
-STATS_RESPONSE=$(curl -s http://localhost:3002/devices/stats)
+STATS_RESPONSE=$(curl -s http://localhost:3002/api/v1/devices/stats)
 if echo "$STATS_RESPONSE" | grep -q "devices\|influxdb"; then
     echo "✅ System stats endpoint working"
 else
