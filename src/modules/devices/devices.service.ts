@@ -582,4 +582,107 @@ export class DevicesService {
       }
     };
   }
+
+  async getLatestOTARelease(): Promise<any> {
+    try {
+      const response = await fetch('https://api.github.com/repos/msamoeed/waterpump-mcu/releases/latest');
+      const release = await response.json();
+      
+      // Find firmware.bin asset
+      const firmwareAsset = release.assets.find((asset: any) => asset.name === 'firmware.bin');
+      const manifestAsset = release.assets.find((asset: any) => asset.name === 'manifest.json');
+      
+      if (!firmwareAsset) {
+        throw new Error('Firmware binary not found in latest release');
+      }
+
+      // Get manifest data
+      let manifest = null;
+      if (manifestAsset) {
+        const manifestResponse = await fetch(manifestAsset.browser_download_url);
+        manifest = await manifestResponse.json();
+      }
+
+      return {
+        version: release.tag_name,
+        firmware_url: firmwareAsset.browser_download_url,
+        manifest: manifest,
+        release_date: release.published_at,
+        description: release.body,
+      };
+    } catch (error) {
+      console.error(`Failed to get latest release: ${error.message}`);
+      return null;
+    }
+  }
+
+  async startOTAUpdate(deviceId: string): Promise<any> {
+    const timestamp = new Date();
+    
+    // Get latest release info
+    const latestRelease = await this.getLatestOTARelease();
+    
+    if (!latestRelease) {
+      throw new Error('No firmware releases available');
+    }
+
+    // Emit OTA update event via WebSocket
+    this.websocketGateway.emitOTAUpdate(deviceId, {
+      device_id: deviceId,
+      version: latestRelease.version,
+      download_url: latestRelease.firmware_url,
+      manifest: latestRelease.manifest,
+      timestamp: timestamp.toISOString(),
+    });
+
+    // Log OTA update in PostgreSQL
+    await this.postgresService.insertEventLog({
+      device_id: deviceId,
+      event_type: 'ota_update_started',
+      message: `OTA update started for version ${latestRelease.version}`,
+      severity: 'info',
+    });
+
+    return {
+      version: latestRelease.version,
+      firmware_url: latestRelease.firmware_url,
+      manifest: latestRelease.manifest,
+    };
+  }
+
+  async handleDeviceLog(
+    deviceId: string,
+    body: { level?: 'debug' | 'info' | 'warn' | 'error'; message: string; timestamp?: string }
+  ): Promise<void> {
+    const level = body.level || 'info';
+    const timestamp = body.timestamp || new Date().toISOString();
+
+    // Emit in real-time to subscribed clients
+    this.websocketGateway.emitDeviceLog(deviceId, { level, message: body.message, timestamp });
+
+    // Persist in Postgres event logs
+    await this.postgresService.insertEventLog({
+      device_id: deviceId,
+      event_type: 'device_log',
+      message: `[${level}] ${body.message}`,
+      severity: level === 'error' ? 'critical' : level === 'warn' ? 'high' : 'low',
+    });
+  }
+
+  async handleDeviceLogs(
+    deviceId: string,
+    logs: Array<{ level?: 'debug' | 'info' | 'warn' | 'error'; tag?: string; message: string; timestamp?: string }>
+  ): Promise<void> {
+    for (const log of logs) {
+      const level = log.level || 'info';
+      const timestamp = log.timestamp || new Date().toISOString();
+      this.websocketGateway.emitDeviceLog(deviceId, { level, message: log.message, timestamp });
+      await this.postgresService.insertEventLog({
+        device_id: deviceId,
+        event_type: 'device_log',
+        message: `[${level}] ${log.message}`,
+        severity: level === 'error' ? 'critical' : level === 'warn' ? 'high' : 'low',
+      });
+    }
+  }
 } 

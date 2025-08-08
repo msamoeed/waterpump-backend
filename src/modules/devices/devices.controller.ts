@@ -861,56 +861,75 @@ export class DevicesController {
     }
   }
 
-  @Get(':deviceId/debug/direct-query')
-  async getDirectQuery(
-    @Param('deviceId') deviceId: string
-  ) {
+  @Get(':deviceId/ota/latest')
+  async getLatestOTAUpdate(@Param('deviceId') deviceId: string) {
     try {
-      console.log(`[DEBUG] Direct query for deviceId: ${deviceId}`);
+      const latestRelease = await this.devicesService.getLatestOTARelease();
       
-      // Direct query to check if device exists
-      const deviceQuery = `SELECT device_id, COUNT(*) as record_count FROM water_levels WHERE device_id = '${deviceId}' GROUP BY device_id`;
-      
-      const deviceResult = [];
-      for await (const row of this.devicesService.influxService.getSQLClient().query(deviceQuery)) {
-        deviceResult.push(row);
-      }
-      
-      // Direct query to get sample data
-      const sampleQuery = `SELECT * FROM water_levels WHERE device_id = '${deviceId}' ORDER BY time DESC LIMIT 3`;
-      
-      const sampleResult = [];
-      for await (const row of this.devicesService.influxService.getSQLClient().query(sampleQuery)) {
-        sampleResult.push(row);
-      }
-      
-      // Direct query to check pump metrics
-      const pumpQuery = `SELECT * FROM pump_metrics WHERE device_id = '${deviceId}' ORDER BY time DESC LIMIT 3`;
-      
-      const pumpResult = [];
-      for await (const row of this.devicesService.influxService.getSQLClient().query(pumpQuery)) {
-        pumpResult.push(row);
+      if (!latestRelease) {
+        throw new HttpException(
+          'No firmware releases available', 
+          HttpStatus.NOT_FOUND
+        );
       }
       
       return {
-        deviceId,
-        deviceExists: deviceResult.length > 0,
-        deviceInfo: deviceResult,
-        waterLevelsData: {
-          count: sampleResult.length,
-          data: sampleResult
-        },
-        pumpMetricsData: {
-          count: pumpResult.length,
-          data: pumpResult
-        }
+        success: true,
+        device_id: deviceId,
+        ...latestRelease
       };
     } catch (error) {
-      console.error('[DEBUG] Direct Query Error:', error);
-      return {
-        error: error.message,
-        stack: error.stack
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to get latest OTA update', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post(':deviceId/ota/start')
+  async startOTAUpdate(@Param('deviceId') deviceId: string) {
+    try {
+      const result = await this.devicesService.startOTAUpdate(deviceId);
+      
+      return { 
+        success: true, 
+        message: 'OTA update initiated successfully',
+        device_id: deviceId,
+        ...result,
+        timestamp: new Date().toISOString(),
       };
+    } catch (error) {
+      throw new HttpException(
+        'Failed to start OTA update', 
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
+
+  @Post(':deviceId/logs')
+  async postDeviceLog(
+    @Param('deviceId') deviceId: string,
+    @Body() body: any
+  ) {
+    try {
+      if (Array.isArray(body)) {
+        await this.devicesService.handleDeviceLogs(
+          deviceId,
+          body as Array<{ level?: 'debug' | 'info' | 'warn' | 'error'; tag?: string; message: string; timestamp?: string }>
+        );
+        return { success: true, count: body.length };
+      } else {
+        await this.devicesService.handleDeviceLog(
+          deviceId,
+          body as { level?: 'debug' | 'info' | 'warn' | 'error'; tag?: string; message: string; timestamp?: string }
+        );
+        return { success: true };
+      }
+    } catch (error) {
+      throw new HttpException('Failed to record device log', HttpStatus.INTERNAL_SERVER_ERROR);
     }
   }
 } 
