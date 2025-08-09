@@ -5,6 +5,7 @@ import { DataModule } from './modules/data/data.module';
 import { AlertsModule } from './modules/alerts/alerts.module';
 import { WebSocketModule } from './modules/websocket/websocket.module';
 import { HealthModule } from './modules/health/health.module';
+import { MotorModule } from './modules/motor/motor.module';
 import { DatabaseModule } from './database/database.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { DatabaseModule } from './database/database.module';
     AlertsModule,
     WebSocketModule,
     HealthModule,
+    MotorModule,
   ],
   controllers: [],
   providers: [],
