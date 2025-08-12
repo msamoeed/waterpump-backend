@@ -35,6 +35,52 @@ export class RedisService {
     return await this.client.get(key);
   }
 
+  // Motor State Operations (Redis as Primary Store)
+  async setMotorState(deviceId: string, state: any, ttlSeconds: number = 7200): Promise<void> {
+    const key = `motor_state:${deviceId}`;
+    await this.client.setex(key, ttlSeconds, JSON.stringify(state)); // 2 hour TTL by default
+  }
+
+  async getMotorState(deviceId: string): Promise<string | null> {
+    const key = `motor_state:${deviceId}`;
+    return await this.client.get(key);
+  }
+
+  async updateMotorStateFields(deviceId: string, updates: Record<string, any>): Promise<void> {
+    const key = `motor_state:${deviceId}`;
+    const currentState = await this.client.get(key);
+    
+    if (currentState) {
+      const state = JSON.parse(currentState);
+      Object.assign(state, updates, { 
+        updatedAt: new Date().toISOString(),
+        lastUpdate: Date.now()
+      });
+      await this.client.setex(key, 7200, JSON.stringify(state)); // Refresh TTL
+    }
+  }
+
+  async deleteMotorState(deviceId: string): Promise<void> {
+    const key = `motor_state:${deviceId}`;
+    await this.client.del(key);
+  }
+
+  // Motor Command Queue (for MCU polling)
+  async setMotorCommand(deviceId: string, command: any, ttlSeconds: number = 120): Promise<void> {
+    const key = `motor_command:${deviceId}`;
+    await this.client.setex(key, ttlSeconds, JSON.stringify(command));
+  }
+
+  async getMotorCommand(deviceId: string): Promise<string | null> {
+    const key = `motor_command:${deviceId}`;
+    return await this.client.get(key);
+  }
+
+  async deleteMotorCommand(deviceId: string): Promise<void> {
+    const key = `motor_command:${deviceId}`;
+    await this.client.del(key);
+  }
+
   async getDeviceKeys(): Promise<string[]> {
     return await this.client.keys('device:*:status');
   }

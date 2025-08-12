@@ -16,16 +16,16 @@ export class MotorService {
   ) {}
 
   /**
-   * Get the current motor state for a device (single source of truth)
+   * Get the current motor state for a device (Redis as single source of truth)
    */
   async getMotorState(deviceId: string): Promise<MotorState> {
-    // Try Redis cache first
-    const cachedState = await this.redisService.get(`motor_state:${deviceId}`);
-    if (cachedState) {
-      return JSON.parse(cachedState);
+    // Redis is primary - check first
+    const redisState = await this.redisService.getMotorState(deviceId);
+    if (redisState) {
+      return JSON.parse(redisState);
     }
 
-    // Fallback to database
+    // If not in Redis, check database as fallback for recovery
     let motorState = await this.motorStateRepository.findOne({
       where: { deviceId }
     });
@@ -35,45 +35,53 @@ export class MotorService {
       motorState = await this.createDefaultMotorState(deviceId);
     }
 
-    // Cache the state in Redis
-    await this.redisService.set(
-      `motor_state:${deviceId}`, 
-      JSON.stringify(motorState), 
-      300 // 5 minutes TTL
-    );
+    // IMPORTANT: Store in Redis as primary (longer TTL)
+    await this.redisService.setMotorState(deviceId, motorState, 7200); // 2 hours
 
+    console.log(`Motor state loaded from database and cached in Redis for device: ${deviceId}`);
     return motorState;
   }
 
   /**
-   * Update motor state (called by MCU heartbeat or state changes)
+   * Update motor state (Redis-first approach with PostgreSQL backup)
    */
   async updateMotorState(deviceId: string, updateData: Partial<MotorStateUpdateDto>): Promise<MotorState> {
-    let motorState = await this.motorStateRepository.findOne({
-      where: { deviceId }
-    });
-
-    if (!motorState) {
-      motorState = await this.createDefaultMotorState(deviceId);
+    // Get current state from Redis (primary source)
+    let motorState: MotorState;
+    const redisState = await this.redisService.getMotorState(deviceId);
+    
+    if (redisState) {
+      motorState = JSON.parse(redisState);
+    } else {
+      // Fallback to database if not in Redis
+      motorState = await this.motorStateRepository.findOne({ where: { deviceId } });
+      if (!motorState) {
+        motorState = await this.createDefaultMotorState(deviceId);
+      }
     }
 
     // Update fields
-    Object.assign(motorState, {
+    const updatedState = {
+      ...motorState,
       ...updateData,
       lastHeartbeat: new Date(),
       mcuOnline: true,
       updatedAt: new Date(),
+      lastUpdate: Date.now(),
+    };
+
+    // PRIMARY: Update Redis immediately (single source of truth)
+    await this.redisService.setMotorState(deviceId, updatedState, 7200); // 2 hours TTL
+
+    // SECONDARY: Async backup to PostgreSQL (for history/recovery)
+    setImmediate(async () => {
+      try {
+        await this.motorStateRepository.save(updatedState);
+        console.log(`Motor state backed up to PostgreSQL for device: ${deviceId}`);
+      } catch (error) {
+        console.error(`Failed to backup motor state to PostgreSQL: ${error.message}`);
+      }
     });
-
-    // Save to database
-    motorState = await this.motorStateRepository.save(motorState);
-
-    // Update Redis cache
-    await this.redisService.set(
-      `motor_state:${deviceId}`, 
-      JSON.stringify(motorState), 
-      300 // 5 minutes TTL
-    );
 
     // Log state change
     await this.postgresService.insertEventLog({
@@ -83,7 +91,8 @@ export class MotorService {
       severity: 'info',
     });
 
-    return motorState;
+    console.log(`Motor state updated in Redis for device: ${deviceId}`);
+    return updatedState as MotorState;
   }
 
   /**
@@ -107,11 +116,7 @@ export class MotorService {
     };
 
     // Store command in Redis for MCU to pick up
-    await this.redisService.set(
-      `motor_command:${deviceId}`, 
-      JSON.stringify(mcuCommand), 
-      120 // 2 minutes TTL
-    );
+    await this.redisService.setMotorCommand(deviceId, mcuCommand, 120); // 2 minutes TTL
 
     // Update expected state immediately for optimistic updates
     const expectedState = this.calculateExpectedState(currentState, command);
@@ -153,17 +158,17 @@ export class MotorService {
   }
 
   /**
-   * Get pending command for MCU
+   * Get pending command for MCU (Redis-based command queue)
    */
   async getPendingCommand(deviceId: string): Promise<any> {
-    const commandKey = `motor_command:${deviceId}`;
-    const commandData = await this.redisService.get(commandKey);
+    const commandData = await this.redisService.getMotorCommand(deviceId);
     
     if (commandData) {
       // Mark command as retrieved (don't delete yet, let MCU acknowledge)
       const command = JSON.parse(commandData);
       command.retrieved_at = new Date().toISOString();
-      await this.redisService.set(commandKey, JSON.stringify(command), 60); // Reduce TTL to 1 minute
+      await this.redisService.setMotorCommand(deviceId, command, 60); // Reduce TTL to 1 minute
+      console.log(`Command retrieved by MCU for device: ${deviceId}`, command);
       return command;
     }
     
@@ -174,8 +179,8 @@ export class MotorService {
    * Acknowledge command execution by MCU
    */
   async acknowledgeCommand(deviceId: string, commandId: string, success: boolean): Promise<void> {
-    const commandKey = `motor_command:${deviceId}`;
-    await this.redisService.del(commandKey);
+    // Remove command from Redis queue
+    await this.redisService.deleteMotorCommand(deviceId);
 
     // Log acknowledgment
     await this.postgresService.insertEventLog({
@@ -184,6 +189,8 @@ export class MotorService {
       message: `Command ${commandId} ${success ? 'executed successfully' : 'failed'}`,
       severity: success ? 'info' : 'warning',
     });
+
+    console.log(`Command acknowledged and removed from queue: ${deviceId}/${commandId} - ${success ? 'SUCCESS' : 'FAILED'}`);
   }
 
   /**
