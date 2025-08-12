@@ -60,10 +60,26 @@ export class MotorService {
       }
     }
 
-    // Update fields
+    // Map snake_case DTO fields to camelCase entity fields
+    const mappedUpdateData: Partial<MotorState> = {};
+    
+    if (updateData.motor_running !== undefined) mappedUpdateData.motorRunning = updateData.motor_running;
+    if (updateData.control_mode !== undefined) mappedUpdateData.controlMode = updateData.control_mode as 'auto' | 'manual';
+    if (updateData.target_mode_active !== undefined) mappedUpdateData.targetModeActive = updateData.target_mode_active;
+    if (updateData.current_target_level !== undefined) mappedUpdateData.currentTargetLevel = updateData.current_target_level;
+    if (updateData.target_description !== undefined) mappedUpdateData.targetDescription = updateData.target_description;
+    if (updateData.protection_active !== undefined) mappedUpdateData.protectionActive = updateData.protection_active;
+    if (updateData.current_amps !== undefined) mappedUpdateData.currentAmps = updateData.current_amps;
+    if (updateData.power_watts !== undefined) mappedUpdateData.powerWatts = updateData.power_watts;
+    if (updateData.runtime_minutes !== undefined) mappedUpdateData.runtimeMinutes = updateData.runtime_minutes;
+    if (updateData.total_runtime_hours !== undefined) mappedUpdateData.totalRuntimeHours = updateData.total_runtime_hours;
+    if (updateData.last_command_source !== undefined) mappedUpdateData.lastCommandSource = updateData.last_command_source;
+    if (updateData.last_command_reason !== undefined) mappedUpdateData.lastCommandReason = updateData.last_command_reason;
+
+    // Update fields with proper camelCase naming
     const updatedState = {
       ...motorState,
-      ...updateData,
+      ...mappedUpdateData,
       lastHeartbeat: new Date(),
       mcuOnline: true,
       updatedAt: new Date(),

@@ -87,12 +87,51 @@ export class RedisService {
 
   async setActiveAlert(deviceId: string, alertId: string, alert: any): Promise<void> {
     const key = `alerts:active:${deviceId}`;
-    await this.client.hset(key, alertId, JSON.stringify(alert));
-    await this.client.expire(key, 3600); // 1 hour expiry
+    
+    // Add the alert with timestamp for individual expiry tracking
+    const alertData = {
+      ...alert,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 3600000).toISOString() // 1 hour from now
+    };
+    
+    await this.client.hset(key, alertId, JSON.stringify(alertData));
+    
+    // Only set expiry if this is the first alert (key didn't exist before)
+    const keyExistsAfter = await this.client.exists(key);
+    const alertCount = await this.client.hlen(key);
+    if (keyExistsAfter === 1 && alertCount === 1) { // Key was just created with first alert
+      await this.client.expire(key, 7200); // 2 hours for the entire hash (safety buffer)
+    }
   }
 
   async getActiveAlerts(deviceId: string): Promise<Record<string, string>> {
     const key = `alerts:active:${deviceId}`;
+    const alerts = await this.client.hgetall(key);
+    
+    // Clean up expired alerts
+    const now = new Date();
+    const expiredAlertIds: string[] = [];
+    
+    for (const [alertId, alertDataStr] of Object.entries(alerts)) {
+      try {
+        const alertData = JSON.parse(alertDataStr);
+        if (alertData.expires_at && new Date(alertData.expires_at) < now) {
+          expiredAlertIds.push(alertId);
+        }
+      } catch (error) {
+        // If alert data is corrupted, mark for removal
+        expiredAlertIds.push(alertId);
+      }
+    }
+    
+    // Remove expired alerts
+    if (expiredAlertIds.length > 0) {
+      await this.client.hdel(key, ...expiredAlertIds);
+      console.log(`Cleaned up ${expiredAlertIds.length} expired alerts for device ${deviceId}`);
+    }
+    
+    // Return remaining alerts
     return await this.client.hgetall(key);
   }
 
