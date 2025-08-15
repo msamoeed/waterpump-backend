@@ -10,4 +10,10 @@ import { CommonModule } from '../../common/common.module';
   providers: [WebSocketGateway],
   exports: [WebSocketGateway],
 })
-export class WebSocketModule {} 
+export class WebSocketModule {
+  constructor(private readonly webSocketGateway: WebSocketGateway) {}
+  
+  getWebSocketGateway(): WebSocketGateway {
+    return this.webSocketGateway;
+  }
+} 

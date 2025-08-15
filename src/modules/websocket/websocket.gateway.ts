@@ -510,10 +510,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server.emit('system_alert', data);
   }
 
-  emitSystemDataUpdate(deviceId: string): void {
-    this.emitSystemDataUpdate(deviceId);
-  }
-
+  // Additional SensorMonitorEvents interface methods
   emitPumpPauseDetails(deviceId: string, data: any): void {
     this.server.to(`device_${deviceId}`).emit('pump_pause_details', data);
   }

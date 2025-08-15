@@ -7,13 +7,16 @@ import { SensorMonitorService } from './sensor-monitor.service';
 import { MotorState } from '../../database/entities/motor-state.entity';
 import { DatabaseModule } from '../../database/database.module';
 import { DevicesModule } from '../devices/devices.module';
+import { WebSocketModule } from '../websocket/websocket.module';
 import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
+import { WebSocketGateway } from '../websocket/websocket.gateway';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([MotorState]),
     DatabaseModule,
     forwardRef(() => DevicesModule),
+    forwardRef(() => WebSocketModule),
   ],
   controllers: [MotorController],
   providers: [
@@ -22,18 +25,7 @@ import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-even
     SensorMonitorService,
     {
       provide: 'SENSOR_MONITOR_EVENTS',
-      useValue: {
-        emitSensorStatusUpdate: () => {},
-        emitPumpPauseEvent: () => {},
-        emitPumpResumeEvent: () => {},
-        emitDetailedPumpPauseEvent: () => {},
-        emitSensorOverrideEvent: () => {},
-        emitSystemAlert: () => {},
-        emitSystemDataUpdate: () => {},
-        emitPumpPauseDetails: () => {},
-        emitSensorMonitoringUpdate: () => {},
-        emitSensorOverrideUpdate: () => {},
-      } as SensorMonitorEvents,
+      useExisting: forwardRef(() => WebSocketGateway),
     },
   ],
   exports: [MotorService, SensorMonitorService],
