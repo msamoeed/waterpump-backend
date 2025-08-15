@@ -457,6 +457,7 @@ export class DevicesService {
         if (point._field === 'level_inches') formatted[tank].level_inches = point._value;
         if (point._field === 'connected') formatted[tank].connected = point._value;
         if (point._field === 'sensor_working') formatted[tank].sensor_working = point._value;
+        if (point._field === 'water_supply_on') formatted[tank].water_supply_on = point._value;
       } else if (point._measurement === 'pump_metrics') {
         const pump = point.pump_id === 'ground' ? 'ground_pump' : 'roof_pump';
         if (point._field === 'current_amps') formatted[pump].current_amps = point._value;
@@ -468,7 +469,21 @@ export class DevicesService {
         if (point._field === 'overtime_protection') formatted[pump].overtime_protection = point._value;
         if (point._field === 'runtime_minutes') formatted[pump].runtime_minutes = point._value;
         if (point._field === 'total_runtime_hours') formatted[pump].total_runtime_hours = point._value;
+      } else if (point._measurement === 'system_status') {
+        if (point._field === 'water_supply_active') formatted.system.water_supply_active = point._value;
+        if (point._field === 'auto_mode_enabled') formatted.system.auto_mode_enabled = point._value;
+        if (point._field === 'manual_pump_control') formatted.system.manual_pump_control = point._value;
       }
+    }
+
+    // Set ground pump status based on water supply being active for ground tank
+    if (formatted.ground_tank.water_supply_on || formatted.system.water_supply_active) {
+      formatted.ground_pump.running = true;
+      // Set some typical values when water supply is on
+      formatted.ground_pump.current_amps = formatted.ground_pump.current_amps || 2.5;
+      formatted.ground_pump.power_watts = formatted.ground_pump.power_watts || 550;
+    } else {
+      formatted.ground_pump.running = false;
     }
 
     return formatted;
