@@ -26,6 +26,7 @@ import { DevicesService } from '../devices/devices.service';
 import { RedisService } from '../../database/services/redis.service';
 import { OneSignalService } from '../../common/services/onesignal.service';
 import { PostgresService } from '../../database/services/postgres.service';
+import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
 
 @Injectable()
 @NestWebSocketGateway({
@@ -34,7 +35,7 @@ import { PostgresService } from '../../database/services/postgres.service';
   },
   namespace: '/',
 })
-export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnect, SensorMonitorEvents {
   @WebSocketServer()
   server: Server<ClientToServerEvents, ServerToClientEvents>;
 
@@ -482,6 +483,47 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       timestamp: data.timestamp || new Date().toISOString(),
     };
     this.server.to(`device_${deviceId}`).emit('device_log', payload);
+  }
+
+  // SensorMonitorEvents interface implementation
+  emitSensorStatusUpdate(deviceId: string, status: any): void {
+    this.server.to(`device_${deviceId}`).emit('sensor_monitoring_update', status);
+  }
+
+  emitPumpPauseEvent(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('pump_paused_sensor', data);
+  }
+
+  emitPumpResumeEvent(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('pump_resumed_sensor', data);
+  }
+
+  emitDetailedPumpPauseEvent(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('pump_pause_details', data);
+  }
+
+  emitSensorOverrideEvent(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('sensor_override_update', data);
+  }
+
+  emitSystemAlert(data: any): void {
+    this.server.emit('system_alert', data);
+  }
+
+  emitSystemDataUpdate(deviceId: string): void {
+    this.emitSystemDataUpdate(deviceId);
+  }
+
+  emitPumpPauseDetails(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('pump_pause_details', data);
+  }
+
+  emitSensorMonitoringUpdate(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('sensor_monitoring_update', data);
+  }
+
+  emitSensorOverrideUpdate(deviceId: string, data: any): void {
+    this.server.to(`device_${deviceId}`).emit('sensor_override_update', data);
   }
 
   // New notification methods

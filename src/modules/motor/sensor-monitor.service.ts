@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { MotorService } from './motor.service';
 import { DevicesService } from '../devices/devices.service';
-import { WebSocketGateway } from '../websocket/websocket.gateway';
+import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 
@@ -14,7 +14,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly motorService: MotorService,
     @Inject(forwardRef(() => DevicesService)) private readonly devicesService: DevicesService,
-    @Inject(forwardRef(() => WebSocketGateway)) private readonly websocketGateway: WebSocketGateway,
+    @Inject('SENSOR_MONITOR_EVENTS') private readonly eventEmitter: SensorMonitorEvents,
     private readonly redisService: RedisService,
     private readonly postgresService: PostgresService,
   ) {}
@@ -341,10 +341,10 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
         severity: (data.requiresManualIntervention ? 'critical' : 'high') as 'high' | 'critical'
       };
 
-      this.websocketGateway.server.to(`device_${deviceId}`).emit('pump_pause_details', pauseDetails);
+      this.eventEmitter.emitPumpPauseDetails(deviceId, pauseDetails);
 
       // Also emit to all clients for system-wide notification
-      this.websocketGateway.server.emit('system_alert', {
+      this.eventEmitter.emitSystemAlert({
         type: 'pump_paused',
         severity: pauseDetails.severity,
         message: `Device ${deviceId}: Roof pump paused due to sensor issues - ${data.requiresManualIntervention ? 'Manual intervention required' : 'Automatic recovery expected'}`,
@@ -424,7 +424,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   }): void {
     try {
       // Emit to all clients subscribed to this device
-      this.websocketGateway.server.to(`device_${deviceId}`).emit('sensor_monitoring_update', {
+      this.eventEmitter.emitSensorMonitoringUpdate(deviceId, {
         device_id: deviceId,
         ground_sensor: {
           connected: status.groundSensorConnected,
@@ -442,7 +442,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       });
 
       // Also emit system data update to refresh the dashboard
-      this.websocketGateway.emitSystemDataUpdate(deviceId);
+      this.eventEmitter.emitSystemDataUpdate(deviceId);
 
     } catch (error) {
       console.error(`Error emitting sensor status update for device ${deviceId}:`, error);
@@ -458,7 +458,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
-      this.websocketGateway.server.to(`device_${deviceId}`).emit('pump_paused_sensor', {
+      this.eventEmitter.emitPumpPauseEvent(deviceId, {
         device_id: deviceId,
         reason: data.reason,
         sensor_status: data.sensorStatus,
@@ -467,7 +467,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       });
 
       // Emit to all clients for system-wide notification
-      this.websocketGateway.server.emit('system_alert', {
+      this.eventEmitter.emitSystemAlert({
         type: 'sensor_offline',
         severity: 'high',
         message: `Device ${deviceId}: Roof pump paused due to sensor issues`,
@@ -489,7 +489,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
-      this.websocketGateway.server.to(`device_${deviceId}`).emit('pump_resumed_sensor', {
+      this.eventEmitter.emitPumpResumeEvent(deviceId, {
         device_id: deviceId,
         reason: data.reason,
         sensor_status: data.sensorStatus,
@@ -498,7 +498,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       });
 
       // Emit to all clients for system-wide notification
-      this.websocketGateway.server.emit('system_alert', {
+      this.eventEmitter.emitSystemAlert({
         type: 'sensor_recovered',
         severity: 'medium',
         message: `Device ${deviceId}: Roof pump resumed after sensor recovery`,
@@ -617,7 +617,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
-      this.websocketGateway.server.to(`device_${deviceId}`).emit('sensor_override_update', {
+      this.eventEmitter.emitSensorOverrideUpdate(deviceId, {
         device_id: deviceId,
         override_enabled: data.enabled,
         reason: data.reason,
@@ -625,7 +625,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       });
 
       // Also emit system data update to refresh the dashboard
-      this.websocketGateway.emitSystemDataUpdate(deviceId);
+      this.eventEmitter.emitSystemDataUpdate(deviceId);
 
     } catch (error) {
       console.error(`Error emitting sensor override event for device ${deviceId}:`, error);

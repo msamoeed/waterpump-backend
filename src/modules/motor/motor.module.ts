@@ -7,6 +7,7 @@ import { SensorMonitorService } from './sensor-monitor.service';
 import { MotorState } from '../../database/entities/motor-state.entity';
 import { DatabaseModule } from '../../database/database.module';
 import { DevicesModule } from '../devices/devices.module';
+import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
 
 @Module({
   imports: [
@@ -15,7 +16,26 @@ import { DevicesModule } from '../devices/devices.module';
     forwardRef(() => DevicesModule),
   ],
   controllers: [MotorController],
-  providers: [MotorService, MotorTasksService, SensorMonitorService],
+  providers: [
+    MotorService, 
+    MotorTasksService, 
+    SensorMonitorService,
+    {
+      provide: 'SENSOR_MONITOR_EVENTS',
+      useValue: {
+        emitSensorStatusUpdate: () => {},
+        emitPumpPauseEvent: () => {},
+        emitPumpResumeEvent: () => {},
+        emitDetailedPumpPauseEvent: () => {},
+        emitSensorOverrideEvent: () => {},
+        emitSystemAlert: () => {},
+        emitSystemDataUpdate: () => {},
+        emitPumpPauseDetails: () => {},
+        emitSensorMonitoringUpdate: () => {},
+        emitSensorOverrideUpdate: () => {},
+      } as SensorMonitorEvents,
+    },
+  ],
   exports: [MotorService, SensorMonitorService],
 })
 export class MotorModule {}
