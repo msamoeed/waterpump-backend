@@ -183,7 +183,8 @@ export class DevicesService {
         const motorState = await this.redisService.getMotorState(deviceId);
         if (motorState) {
           const motorData = JSON.parse(motorState);
-          // Roof pump status is controlled by motor state
+          // Roof pump status is controlled by motor state (start/stop commands from mobile/API)
+          // Ground pump status is controlled by water supply status from sensors
           if (statusData.roof_pump) {
             statusData.roof_pump.running = motorData.motorRunning || false;
             if (motorData.motorRunning) {
@@ -504,7 +505,8 @@ export class DevicesService {
     }
 
     // Set ground pump status based on water supply being active for ground tank
-    if (formatted.ground_tank.water_supply_on || formatted.system.water_supply_active) {
+    // Ground pump should only run when there's actual water supply from ground tank
+    if (formatted.ground_tank.water_supply_on) {
       formatted.ground_pump.running = true;
       // Set some typical values when water supply is on
       formatted.ground_pump.current_amps = formatted.ground_pump.current_amps || 2.5;
@@ -512,6 +514,9 @@ export class DevicesService {
     } else {
       formatted.ground_pump.running = false;
     }
+
+    // Roof pump status will be set from motor state in getCurrentStatus
+    // Do not set roof pump running status here - it should come from motor commands
 
     return formatted;
   }
@@ -528,8 +533,9 @@ export class DevicesService {
         ...statusData,
         ground_pump: {
           ...statusData.pump,
-          // Ground pump runs when water supply is on
-          running: statusData.ground_tank?.water_supply_on || statusData.system?.water_supply_active || statusData.pump.running,
+          // Ground pump runs ONLY when ground tank water supply is on
+          // Not when system water supply is active (that's for roof pump)
+          running: statusData.ground_tank?.water_supply_on || false,
         },
         roof_pump: {
           ...statusData.pump,
