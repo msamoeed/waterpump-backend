@@ -77,6 +77,31 @@ export class MotorStateUpdateDto {
   @IsString()
   @IsOptional()
   last_command_reason?: string;
+
+  // Pending state fields
+  @IsBoolean()
+  @IsOptional()
+  pending_motor_running?: boolean;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['auto', 'manual'])
+  pending_control_mode?: string;
+
+  @IsBoolean()
+  @IsOptional()
+  pending_target_active?: boolean;
+
+  @IsNumber()
+  @IsOptional()
+  pending_target_level?: number;
+
+  @IsString()
+  @IsOptional()
+  pending_command_id?: string;
+
+  @IsOptional()
+  pending_command_timestamp?: Date;
 }
 
 export class MotorHeartbeatDto {

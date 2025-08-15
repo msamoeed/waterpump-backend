@@ -29,6 +29,25 @@ export class MotorState {
   @Column({ name: 'last_command_reason', nullable: true })
   lastCommandReason?: string;
 
+  // Pending state fields
+  @Column({ name: 'pending_motor_running', nullable: true })
+  pendingMotorRunning?: boolean;
+
+  @Column({ name: 'pending_control_mode', nullable: true })
+  pendingControlMode?: 'auto' | 'manual';
+
+  @Column({ name: 'pending_target_active', nullable: true })
+  pendingTargetActive?: boolean;
+
+  @Column({ name: 'pending_target_level', type: 'float', nullable: true })
+  pendingTargetLevel?: number;
+
+  @Column({ name: 'pending_command_id', nullable: true })
+  pendingCommandId?: string;
+
+  @Column({ name: 'pending_command_timestamp', type: 'timestamp', nullable: true })
+  pendingCommandTimestamp?: Date;
+
   @Column({ name: 'current_amps', type: 'float', default: 0 })
   currentAmps: number;
 

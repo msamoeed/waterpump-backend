@@ -75,6 +75,14 @@ export class MotorService {
     if (updateData.total_runtime_hours !== undefined) mappedUpdateData.totalRuntimeHours = updateData.total_runtime_hours;
     if (updateData.last_command_source !== undefined) mappedUpdateData.lastCommandSource = updateData.last_command_source;
     if (updateData.last_command_reason !== undefined) mappedUpdateData.lastCommandReason = updateData.last_command_reason;
+    
+    // Map pending state fields
+    if (updateData.pending_motor_running !== undefined) mappedUpdateData.pendingMotorRunning = updateData.pending_motor_running;
+    if (updateData.pending_control_mode !== undefined) mappedUpdateData.pendingControlMode = updateData.pending_control_mode as 'auto' | 'manual';
+    if (updateData.pending_target_active !== undefined) mappedUpdateData.pendingTargetActive = updateData.pending_target_active;
+    if (updateData.pending_target_level !== undefined) mappedUpdateData.pendingTargetLevel = updateData.pending_target_level;
+    if (updateData.pending_command_id !== undefined) mappedUpdateData.pendingCommandId = updateData.pending_command_id;
+    if (updateData.pending_command_timestamp !== undefined) mappedUpdateData.pendingCommandTimestamp = updateData.pending_command_timestamp;
 
     // Update fields with proper camelCase naming
     const updatedState = {
@@ -134,10 +142,10 @@ export class MotorService {
     // Store command in Redis for MCU to pick up
     await this.redisService.setMotorCommand(deviceId, mcuCommand, 120); // 2 minutes TTL
 
-    // Update expected state immediately for optimistic updates
-    const expectedState = this.calculateExpectedState(currentState, command);
+    // Set pending state for the command
+    const pendingState = this.calculatePendingState(command, mcuCommand.command_id);
     const updatedState = await this.updateMotorState(deviceId, {
-      ...expectedState,
+      ...pendingState,
       last_command_source: command.source || 'api',
       last_command_reason: command.reason || 'API command',
     });
@@ -154,9 +162,14 @@ export class MotorService {
   }
 
   /**
-   * Handle MCU heartbeat
+   * Handle MCU heartbeat with pending state resolution
    */
   async handleHeartbeat(heartbeat: MotorHeartbeatDto): Promise<MotorState> {
+    const currentState = await this.getMotorState(heartbeat.device_id);
+    
+    // Check if any pending states should be cleared based on MCU confirmation
+    const pendingClears = this.checkPendingStateResolution(currentState, heartbeat);
+    
     const updateData: Partial<MotorStateUpdateDto> = {
       motor_running: heartbeat.motor_running,
       control_mode: heartbeat.control_mode,
@@ -168,6 +181,7 @@ export class MotorService {
       power_watts: heartbeat.power_watts,
       runtime_minutes: heartbeat.runtime_minutes,
       total_runtime_hours: heartbeat.total_runtime_hours,
+      ...pendingClears, // Clear pending states if resolved
     };
 
     return await this.updateMotorState(heartbeat.device_id, updateData);
@@ -297,5 +311,80 @@ export class MotorService {
     }
 
     return expectedState;
+  }
+
+  private calculatePendingState(command: MotorControlCommandDto, commandId: string): Partial<MotorStateUpdateDto> {
+    const pendingState: Partial<MotorStateUpdateDto> = {
+      pending_command_id: commandId,
+      pending_command_timestamp: new Date(),
+    };
+
+    switch (command.action) {
+      case 'start':
+        pendingState.pending_motor_running = true;
+        pendingState.pending_target_active = false;
+        break;
+      case 'stop':
+        pendingState.pending_motor_running = false;
+        pendingState.pending_target_active = false;
+        break;
+      case 'target':
+        pendingState.pending_motor_running = true;
+        pendingState.pending_target_active = true;
+        pendingState.pending_target_level = command.target_level;
+        break;
+      case 'auto':
+        pendingState.pending_control_mode = 'auto';
+        break;
+      case 'manual':
+        pendingState.pending_control_mode = 'manual';
+        break;
+      case 'reset_protection':
+        // Protection reset doesn't have a pending state
+        break;
+    }
+
+    return pendingState;
+  }
+
+  private checkPendingStateResolution(currentState: MotorState, heartbeat: MotorHeartbeatDto): Partial<MotorStateUpdateDto> {
+    const pendingClears: Partial<MotorStateUpdateDto> = {};
+
+    // Clear pending motor running state if MCU state matches pending state
+    if (currentState.pendingMotorRunning !== undefined && 
+        currentState.pendingMotorRunning === heartbeat.motor_running) {
+      pendingClears.pending_motor_running = null;
+      console.log(`Pending motor running state resolved: ${heartbeat.motor_running}`);
+    }
+
+    // Clear pending control mode if MCU state matches pending state
+    if (currentState.pendingControlMode !== undefined && 
+        currentState.pendingControlMode === heartbeat.control_mode) {
+      pendingClears.pending_control_mode = null;
+      console.log(`Pending control mode resolved: ${heartbeat.control_mode}`);
+    }
+
+    // Clear pending target active state if MCU state matches pending state
+    if (currentState.pendingTargetActive !== undefined && 
+        currentState.pendingTargetActive === heartbeat.target_mode_active) {
+      pendingClears.pending_target_active = null;
+      console.log(`Pending target active state resolved: ${heartbeat.target_mode_active}`);
+    }
+
+    // Clear pending target level if MCU state matches (with tolerance for floating point)
+    if (currentState.pendingTargetLevel !== undefined && 
+        heartbeat.current_target_level !== undefined &&
+        Math.abs(currentState.pendingTargetLevel - heartbeat.current_target_level) < 0.1) {
+      pendingClears.pending_target_level = null;
+      console.log(`Pending target level resolved: ${heartbeat.current_target_level}`);
+    }
+
+    // Clear command ID and timestamp if any pending state was resolved
+    if (Object.keys(pendingClears).length > 0) {
+      pendingClears.pending_command_id = null;
+      pendingClears.pending_command_timestamp = null;
+    }
+
+    return pendingClears;
   }
 }
