@@ -6,7 +6,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger } from '@nestjs/common';
+import { Logger, Injectable } from '@nestjs/common';
 import {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -15,8 +15,13 @@ import {
   AlertEvent,
   DeviceOfflineEvent,
   OTAUpdateEvent,
+  SystemDataEvent,
 } from '../../common/interfaces/websocket-events.interface';
+import { MotorService } from '../motor/motor.service';
+import { DevicesService } from '../devices/devices.service';
+import { RedisService } from '../../database/services/redis.service';
 
+@Injectable()
 @NestWebSocketGateway({
   cors: {
     origin: '*',
@@ -30,6 +35,12 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   private logger: Logger = new Logger('WebSocketGateway');
   private connectedClients: Map<string, Set<string>> = new Map(); // deviceId -> Set of clientIds
   private otaUpdateSessions: Map<string, any> = new Map(); // deviceId -> OTA session data
+
+  constructor(
+    private motorService: MotorService,
+    private devicesService: DevicesService,
+    private redisService: RedisService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
@@ -74,6 +85,34 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       status: null,
       timestamp: new Date().toISOString(),
     } as DeviceUpdateEvent);
+  }
+
+  @SubscribeMessage('subscribe_system_data')
+  async handleSubscribeSystemData(client: Socket, deviceId: string) {
+    client.join(`system_data_${deviceId}`);
+    this.logger.log(`Client ${client.id} subscribed to system data for device ${deviceId}`);
+    
+    // Send current system data immediately
+    await this.handleGetSystemData(client, deviceId);
+  }
+
+  @SubscribeMessage('get_system_data')
+  async handleGetSystemData(client: Socket, deviceId: string) {
+    try {
+      const systemData = await this.fetchSystemData(deviceId);
+      client.emit('system_data', systemData);
+      this.logger.log(`System data sent to client ${client.id} for device ${deviceId}`);
+    } catch (error) {
+      this.logger.error(`Failed to fetch system data for device ${deviceId}: ${error.message}`);
+      client.emit('system_data', {
+        device_id: deviceId,
+        motor_state: null,
+        device_status: null,
+        alerts: [],
+        timestamp: new Date().toISOString(),
+        error: error.message,
+      });
+    }
   }
 
   @SubscribeMessage('request_ota_update')
@@ -203,6 +242,16 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server.to(`device_${deviceId}`).emit('device_log', payload);
   }
 
+  async emitSystemDataUpdate(deviceId: string) {
+    try {
+      const systemData = await this.fetchSystemData(deviceId);
+      this.server.to(`system_data_${deviceId}`).emit('system_data', systemData);
+      this.logger.log(`System data update emitted for device ${deviceId}`);
+    } catch (error) {
+      this.logger.error(`Failed to emit system data update for device ${deviceId}: ${error.message}`);
+    }
+  }
+
   // Utility methods
   getConnectedClientsCount(deviceId?: string): number {
     if (deviceId) {
@@ -217,6 +266,72 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   getOTASessions(): any[] {
     return Array.from(this.otaUpdateSessions.values());
+  }
+
+  private async fetchSystemData(deviceId: string): Promise<SystemDataEvent> {
+    try {
+      // Fetch motor state
+      const motorState = await this.motorService.getMotorState(deviceId);
+      
+      // Fetch device status
+      const deviceStatus = await this.devicesService.getCurrentStatus(deviceId);
+      
+      // Fetch active alerts
+      const alertsData = await this.redisService.getActiveAlerts(deviceId);
+      const alerts = Object.entries(alertsData).map(([id, alertStr]) => {
+        try {
+          const alert = JSON.parse(alertStr);
+          return {
+            id,
+            type: alert.type || 'unknown',
+            message: alert.message || 'No message',
+            severity: alert.severity || 'medium',
+            created_at: alert.created_at || new Date().toISOString(),
+            expires_at: alert.expires_at,
+          };
+        } catch (error) {
+          return {
+            id,
+            type: 'parse_error',
+            message: 'Failed to parse alert data',
+            severity: 'low' as const,
+            created_at: new Date().toISOString(),
+          };
+        }
+      });
+
+      return {
+        device_id: deviceId,
+        motor_state: {
+          motorRunning: motorState.motorRunning,
+          controlMode: motorState.controlMode,
+          targetModeActive: motorState.targetModeActive,
+          currentTargetLevel: motorState.currentTargetLevel,
+          targetDescription: motorState.targetDescription,
+          protectionActive: motorState.protectionActive,
+          currentAmps: motorState.currentAmps,
+          powerWatts: motorState.powerWatts,
+          runtimeMinutes: motorState.runtimeMinutes,
+          totalRuntimeHours: motorState.totalRuntimeHours,
+          mcuOnline: motorState.mcuOnline,
+          lastCommandSource: motorState.lastCommandSource,
+          lastCommandReason: motorState.lastCommandReason,
+          // Pending states
+          pendingMotorRunning: motorState.pendingMotorRunning,
+          pendingControlMode: motorState.pendingControlMode,
+          pendingTargetActive: motorState.pendingTargetActive,
+          pendingTargetLevel: motorState.pendingTargetLevel,
+          pendingCommandId: motorState.pendingCommandId,
+          pendingCommandTimestamp: motorState.pendingCommandTimestamp ? motorState.pendingCommandTimestamp.toISOString() : undefined,
+        },
+        device_status: deviceStatus,
+        alerts,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      this.logger.error(`Error fetching system data for device ${deviceId}: ${error.message}`);
+      throw error;
+    }
   }
 
   private async getLatestRelease(): Promise<any> {

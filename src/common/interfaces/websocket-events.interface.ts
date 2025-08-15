@@ -62,6 +62,77 @@ export interface DeviceLogEvent {
   timestamp: string;
 }
 
+export interface SystemDataEvent {
+  device_id: string;
+  motor_state: {
+    motorRunning: boolean;
+    controlMode: 'auto' | 'manual';
+    targetModeActive: boolean;
+    currentTargetLevel?: number;
+    targetDescription?: string;
+    protectionActive: boolean;
+    currentAmps: number;
+    powerWatts: number;
+    runtimeMinutes: number;
+    totalRuntimeHours: number;
+    mcuOnline: boolean;
+    lastCommandSource?: string;
+    lastCommandReason?: string;
+    // Pending states
+    pendingMotorRunning?: boolean;
+    pendingControlMode?: 'auto' | 'manual';
+    pendingTargetActive?: boolean;
+    pendingTargetLevel?: number;
+    pendingCommandId?: string;
+    pendingCommandTimestamp?: string;
+  };
+  device_status: {
+    ground_tank: {
+      level_percent: number;
+      level_inches: number;
+      alarm_active: boolean;
+      connected: boolean;
+      sensor_working: boolean;
+      water_supply_on: boolean;
+    };
+    roof_tank: {
+      level_percent: number;
+      level_inches: number;
+      alarm_active: boolean;
+      connected: boolean;
+      sensor_working: boolean;
+      water_supply_on: boolean;
+    };
+    pump: {
+      running: boolean;
+      manual_override: boolean;
+      current_amps: number;
+      power_watts: number;
+      daily_consumption: number;
+      hourly_consumption: number;
+      runtime_minutes: number;
+      total_runtime_hours: number;
+      protection_active: boolean;
+      overcurrent_protection: boolean;
+      overtime_protection: boolean;
+    };
+    system: {
+      auto_mode_enabled: boolean;
+      manual_pump_control: boolean;
+      water_supply_active: boolean;
+    };
+  };
+  alerts: Array<{
+    id: string;
+    type: string;
+    message: string;
+    severity: 'low' | 'medium' | 'high' | 'critical';
+    created_at: string;
+    expires_at?: string;
+  }>;
+  timestamp: string;
+}
+
 export interface ServerToClientEvents {
   device_update: (data: DeviceUpdateEvent) => void;
   pump_event: (data: PumpEvent) => void;
@@ -71,11 +142,14 @@ export interface ServerToClientEvents {
   ota_progress_update: (data: OTAProgressEvent) => void;
   ota_update_complete: (data: OTACompleteEvent) => void;
   device_log: (data: DeviceLogEvent) => void;
+  system_data: (data: SystemDataEvent) => void;
 }
 
 export interface ClientToServerEvents {
   subscribe_device: (deviceId: string) => void;
   get_current_status: () => void;
+  get_system_data: (deviceId: string) => void;
+  subscribe_system_data: (deviceId: string) => void;
   request_ota_update: (deviceId: string) => void;
   ota_progress: (data: { device_id: string; progress: number; status: string }) => void;
   ota_complete: (data: { device_id: string; success: boolean; version: string; error?: string }) => void;
