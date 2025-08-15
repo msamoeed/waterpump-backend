@@ -303,6 +303,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       return {
         device_id: deviceId,
         motor_state: {
+       
           motorRunning: motorState.motorRunning,
           controlMode: motorState.controlMode,
           targetModeActive: motorState.targetModeActive,

@@ -164,7 +164,9 @@ export class DevicesService {
     const cachedStatus = await this.redisService.getDeviceStatus(deviceId);
     
     if (cachedStatus) {
-      return JSON.parse(cachedStatus);
+      const statusData = JSON.parse(cachedStatus);
+      // Transform old format with single 'pump' field to new dual pump format
+      return this.transformToNewFormat(statusData);
     }
 
     // Fallback to InfluxDB for recent data
@@ -487,6 +489,66 @@ export class DevicesService {
     }
 
     return formatted;
+  }
+
+  private transformToNewFormat(statusData: any): any {
+    // If it already has the new format, return as is
+    if (statusData.ground_pump && statusData.roof_pump) {
+      return statusData;
+    }
+
+    // If it has old format with single 'pump' field, transform it
+    if (statusData.pump) {
+      const transformedData = {
+        ...statusData,
+        ground_pump: {
+          ...statusData.pump,
+          // Ground pump runs when water supply is on
+          running: statusData.ground_tank?.water_supply_on || statusData.system?.water_supply_active || statusData.pump.running,
+        },
+        roof_pump: {
+          ...statusData.pump,
+          // Roof pump runs when main pump is on (assuming this is the roof pump)
+          running: statusData.pump.running,
+        },
+      };
+      
+      // Remove the old single pump field
+      delete transformedData.pump;
+      
+      return transformedData;
+    }
+
+    // If no pump data, return with empty pump objects
+    return {
+      ...statusData,
+      ground_pump: {
+        running: false,
+        manual_override: false,
+        current_amps: 0,
+        power_watts: 0,
+        daily_consumption: 0,
+        hourly_consumption: 0,
+        runtime_minutes: 0,
+        total_runtime_hours: 0,
+        protection_active: false,
+        overcurrent_protection: false,
+        overtime_protection: false,
+      },
+      roof_pump: {
+        running: false,
+        manual_override: false,
+        current_amps: 0,
+        power_watts: 0,
+        daily_consumption: 0,
+        hourly_consumption: 0,
+        runtime_minutes: 0,
+        total_runtime_hours: 0,
+        protection_active: false,
+        overcurrent_protection: false,
+        overtime_protection: false,
+      },
+    };
   }
 
   private async getRedisStats(): Promise<any> {
