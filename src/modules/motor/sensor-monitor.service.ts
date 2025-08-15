@@ -1,9 +1,9 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { MotorService } from './motor.service';
 import { DevicesService } from '../devices/devices.service';
-import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
+import { WebSocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
 export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
@@ -14,10 +14,15 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly motorService: MotorService,
     @Inject(forwardRef(() => DevicesService)) private readonly devicesService: DevicesService,
-    @Inject('SENSOR_MONITOR_EVENTS') private readonly eventEmitter: SensorMonitorEvents,
+    @Inject(forwardRef(() => WebSocketGateway)) private readonly eventEmitter: WebSocketGateway,
     private readonly redisService: RedisService,
     private readonly postgresService: PostgresService,
-  ) {}
+  ) {
+    // Log if eventEmitter is not available during initialization
+    if (!this.eventEmitter) {
+      console.warn('WebSocketGateway not available during SensorMonitorService initialization');
+    }
+  }
 
   onModuleInit() {
     // Start monitoring sensors every 10 seconds
@@ -178,6 +183,15 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
         requiresManualIntervention
       });
 
+      // Also emit to all clients for system-wide notification
+      this.eventEmitter.emitSystemAlert({
+        type: 'pump_paused',
+        severity: 'high',
+        message: `Device ${deviceId}: Roof pump paused due to sensor issues - ${requiresManualIntervention ? 'Manual intervention required' : 'Automatic recovery expected'}`,
+        device_id: deviceId,
+        timestamp: new Date().toISOString()
+      });
+
       // Also emit the basic pump pause event for backward compatibility
       this.emitPumpPauseEvent(deviceId, {
         reason: `Sensor offline - Ground: ${sensorStatus.groundSensorConnected ? 'OK' : 'OFFLINE'}, Roof: ${sensorStatus.roofSensorConnected ? 'OK' : 'OFFLINE'}`,
@@ -310,6 +324,12 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     requiresManualIntervention: boolean;
   }): void {
     try {
+      // Check if eventEmitter is available
+      if (!this.eventEmitter) {
+        console.warn(`Event emitter not available for device ${deviceId}, skipping detailed pump pause event`);
+        return;
+      }
+
       const pauseDetails = {
         device_id: deviceId,
         pause_reason: 'sensor_offline' as const,
@@ -423,6 +443,12 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     isPausedBySensor: boolean;
   }): void {
     try {
+      // Check if eventEmitter is available
+      if (!this.eventEmitter) {
+        console.warn(`Event emitter not available for device ${deviceId}, skipping sensor status update`);
+        return;
+      }
+
       // Emit to all clients subscribed to this device
       this.eventEmitter.emitSensorMonitoringUpdate(deviceId, {
         device_id: deviceId,
@@ -458,6 +484,12 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
+      // Check if eventEmitter is available
+      if (!this.eventEmitter) {
+        console.warn(`Event emitter not available for device ${deviceId}, skipping pump pause event`);
+        return;
+      }
+
       this.eventEmitter.emitPumpPauseEvent(deviceId, {
         device_id: deviceId,
         reason: data.reason,
@@ -489,6 +521,12 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
+      // Check if eventEmitter is available
+      if (!this.eventEmitter) {
+        console.warn(`Event emitter not available for device ${deviceId}, skipping pump resume event`);
+        return;
+      }
+
       this.eventEmitter.emitPumpResumeEvent(deviceId, {
         device_id: deviceId,
         reason: data.reason,
@@ -617,6 +655,12 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     timestamp: string;
   }): void {
     try {
+      // Check if eventEmitter is available
+      if (!this.eventEmitter) {
+        console.warn(`Event emitter not available for device ${deviceId}, skipping sensor override event`);
+        return;
+      }
+
       this.eventEmitter.emitSensorOverrideUpdate(deviceId, {
         device_id: deviceId,
         override_enabled: data.enabled,

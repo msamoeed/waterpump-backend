@@ -8,8 +8,6 @@ import { MotorState } from '../../database/entities/motor-state.entity';
 import { DatabaseModule } from '../../database/database.module';
 import { DevicesModule } from '../devices/devices.module';
 import { WebSocketModule } from '../websocket/websocket.module';
-import { SensorMonitorEvents } from '../../common/interfaces/sensor-monitor-events.interface';
-import { WebSocketGateway } from '../websocket/websocket.gateway';
 
 @Module({
   imports: [
@@ -23,10 +21,6 @@ import { WebSocketGateway } from '../websocket/websocket.gateway';
     MotorService, 
     MotorTasksService, 
     SensorMonitorService,
-    {
-      provide: 'SENSOR_MONITOR_EVENTS',
-      useExisting: forwardRef(() => WebSocketGateway),
-    },
   ],
   exports: [MotorService, SensorMonitorService],
 })
