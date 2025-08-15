@@ -93,6 +93,135 @@ export interface SensorStatusNotificationEvent {
   reason?: string;
 }
 
+export interface SensorMonitoringUpdateEvent {
+  device_id: string;
+  ground_sensor: {
+    connected: boolean;
+    working: boolean;
+  };
+  roof_sensor: {
+    connected: boolean;
+    working: boolean;
+  };
+  pump_status: {
+    running: boolean;
+    paused_by_sensor: boolean;
+  };
+  timestamp: string;
+}
+
+export interface PumpPausedSensorEvent {
+  device_id: string;
+  reason: string;
+  sensor_status: {
+    groundSensorConnected: boolean;
+    roofSensorConnected: boolean;
+    groundSensorWorking: boolean;
+    roofSensorWorking: boolean;
+  };
+  timestamp: string;
+  action: 'paused';
+}
+
+export interface PumpPauseDetailsEvent {
+  device_id: string;
+  pause_reason: 'sensor_offline' | 'sensor_malfunction' | 'manual_override' | 'system_error';
+  pause_details: {
+    ground_sensor: {
+      connected: boolean;
+      working: boolean;
+      last_reading?: number;
+      last_reading_time?: string;
+      error_type?: 'disconnected' | 'no_data' | 'invalid_reading' | 'timeout';
+    };
+    roof_sensor: {
+      connected: boolean;
+      working: boolean;
+      last_reading?: number;
+      last_reading_time?: string;
+      error_type?: 'disconnected' | 'no_data' | 'invalid_reading' | 'timeout';
+    };
+    pump_state_before_pause: {
+      running: boolean;
+      mode: 'auto' | 'manual';
+      target_level?: number;
+      runtime_minutes: number;
+    };
+    estimated_resume_time?: string;
+    requires_manual_intervention: boolean;
+  };
+  timestamp: string;
+  severity: 'warning' | 'high' | 'critical';
+}
+
+export interface PumpResumedSensorEvent {
+  device_id: string;
+  reason: string;
+  sensor_status: {
+    groundSensorConnected: boolean;
+    roofSensorConnected: boolean;
+    groundSensorWorking: boolean;
+    roofSensorWorking: boolean;
+  };
+  timestamp: string;
+  action: 'resumed';
+}
+
+export interface SensorOverrideUpdateEvent {
+  device_id: string;
+  override_enabled: boolean;
+  reason: string;
+  timestamp: string;
+}
+
+export interface SystemAlertEvent {
+  type: 'sensor_offline' | 'sensor_recovered' | 'pump_paused' | 'pump_resumed';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  message: string;
+  device_id: string;
+  timestamp: string;
+}
+
+export interface SensorStatusResponseEvent {
+  success: boolean;
+  data?: {
+    device_id: string;
+    sensor_monitoring_active: boolean;
+    is_overridden: boolean;
+    pause_status: any;
+    timestamp: string;
+  };
+  error?: string;
+  device_id: string;
+  timestamp: string;
+}
+
+export interface SensorOverrideResponseEvent {
+  success: boolean;
+  message?: string;
+  error?: string;
+  data?: {
+    device_id: string;
+    override_enabled: boolean;
+    reason?: string;
+    timestamp: string;
+  };
+  device_id: string;
+  timestamp: string;
+}
+
+export interface SensorCheckResponseEvent {
+  success: boolean;
+  message?: string;
+  error?: string;
+  data?: {
+    device_id: string;
+    timestamp: string;
+  };
+  device_id: string;
+  timestamp: string;
+}
+
 export interface DeviceLogEvent {
   device_id: string;
   level: 'debug' | 'info' | 'warn' | 'error';
@@ -208,6 +337,15 @@ export interface ServerToClientEvents {
   ota_update_response: (data: OTAUpdateResponseEvent) => void;
   water_supply_notification: (data: WaterSupplyNotificationEvent) => void;
   sensor_status_notification: (data: SensorStatusNotificationEvent) => void;
+  sensor_monitoring_update: (data: SensorMonitoringUpdateEvent) => void;
+  pump_paused_sensor: (data: PumpPausedSensorEvent) => void;
+  pump_pause_details: (data: PumpPauseDetailsEvent) => void;
+  pump_resumed_sensor: (data: PumpResumedSensorEvent) => void;
+  sensor_override_update: (data: SensorOverrideUpdateEvent) => void;
+  system_alert: (data: SystemAlertEvent) => void;
+  sensor_status_response: (data: SensorStatusResponseEvent) => void;
+  sensor_override_response: (data: SensorOverrideResponseEvent) => void;
+  sensor_check_response: (data: SensorCheckResponseEvent) => void;
 }
 
 export interface ClientToServerEvents {
@@ -221,4 +359,7 @@ export interface ClientToServerEvents {
   motor_control: (data: { device_id: string; action: 'start' | 'stop'; reason?: string }) => void;
   reset_protection: (data: { device_id: string; reason?: string }) => void;
   ota_update_response: (data: { success: boolean; message?: string; error?: string; device_id: string; version?: string; timestamp: string }) => void;
+  get_sensor_status: (deviceId: string) => void;
+  override_sensor_monitoring: (data: { device_id: string; enable: boolean; reason?: string }) => void;
+  force_sensor_check: (deviceId: string) => void;
 } 

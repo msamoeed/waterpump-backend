@@ -25,6 +25,7 @@ import { MotorService } from '../motor/motor.service';
 import { DevicesService } from '../devices/devices.service';
 import { RedisService } from '../../database/services/redis.service';
 import { OneSignalService } from '../../common/services/onesignal.service';
+import { PostgresService } from '../../database/services/postgres.service';
 
 @Injectable()
 @NestWebSocketGateway({
@@ -50,6 +51,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     @Inject(forwardRef(() => DevicesService)) private devicesService: DevicesService,
     private redisService: RedisService,
     private oneSignalService: OneSignalService,
+    private postgresService: PostgresService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -321,6 +323,126 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         success: false,
         error: error.message,
         device_id: data.device_id,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  @SubscribeMessage('get_sensor_status')
+  async handleGetSensorStatus(client: Socket, deviceId: string) {
+    this.logger.log(`Sensor status requested for device ${deviceId}`);
+    
+    try {
+      // Import the sensor monitor service dynamically to avoid circular dependency
+      const { SensorMonitorService } = await import('../motor/sensor-monitor.service');
+      const sensorMonitorService = new SensorMonitorService(
+        this.motorService,
+        this.devicesService,
+        this,
+        this.redisService,
+        this.postgresService
+      );
+
+      const pauseStatus = await sensorMonitorService.getSensorPauseStatus(deviceId);
+      const isOverridden = await sensorMonitorService.isSensorMonitoringOverridden(deviceId);
+      
+      client.emit('sensor_status_response', {
+        success: true,
+        data: {
+          device_id: deviceId,
+          sensor_monitoring_active: !isOverridden,
+          is_overridden: isOverridden,
+          pause_status: pauseStatus,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      
+    } catch (error) {
+      this.logger.error(`Failed to get sensor status for device ${deviceId}: ${error.message}`);
+      client.emit('sensor_status_response', {
+        success: false,
+        error: error.message,
+        device_id: deviceId,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  @SubscribeMessage('override_sensor_monitoring')
+  async handleOverrideSensorMonitoring(client: Socket, data: { device_id: string; enable: boolean; reason?: string }) {
+    this.logger.log(`Sensor monitoring override requested for device ${data.device_id}: ${data.enable ? 'enable' : 'disable'}`);
+    
+    try {
+      // Import the sensor monitor service dynamically to avoid circular dependency
+      const { SensorMonitorService } = await import('../motor/sensor-monitor.service');
+      const sensorMonitorService = new SensorMonitorService(
+        this.motorService,
+        this.devicesService,
+        this,
+        this.redisService,
+        this.postgresService
+      );
+
+      await sensorMonitorService.overrideSensorMonitoring(
+        data.device_id, 
+        data.enable, 
+        data.reason
+      );
+      
+      client.emit('sensor_override_response', {
+        success: true,
+        message: `Sensor monitoring ${data.enable ? 'overridden' : 'enabled'} successfully`,
+        data: {
+          device_id: data.device_id,
+          override_enabled: data.enable,
+          reason: data.reason,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      
+    } catch (error) {
+      this.logger.error(`Failed to override sensor monitoring for device ${data.device_id}: ${error.message}`);
+      client.emit('sensor_override_response', {
+        success: false,
+        error: error.message,
+        device_id: data.device_id,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  @SubscribeMessage('force_sensor_check')
+  async handleForceSensorCheck(client: Socket, deviceId: string) {
+    this.logger.log(`Forced sensor check requested for device ${deviceId}`);
+    
+    try {
+      // Import the sensor monitor service dynamically to avoid circular dependency
+      const { SensorMonitorService } = await import('../motor/sensor-monitor.service');
+      const sensorMonitorService = new SensorMonitorService(
+        this.motorService,
+        this.devicesService,
+        this,
+        this.redisService,
+        this.postgresService
+      );
+
+      await sensorMonitorService.forceSensorStatusCheck(deviceId);
+      
+      client.emit('sensor_check_response', {
+        success: true,
+        message: 'Sensor status check completed successfully',
+        data: {
+          device_id: deviceId,
+          timestamp: new Date().toISOString(),
+        },
+      });
+      
+    } catch (error) {
+      this.logger.error(`Failed to perform sensor check for device ${deviceId}: ${error.message}`);
+      client.emit('sensor_check_response', {
+        success: false,
+        error: error.message,
+        device_id: deviceId,
         timestamp: new Date().toISOString(),
       });
     }
