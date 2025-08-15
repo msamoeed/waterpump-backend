@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { DatabaseModule } from '../../database/database.module';
 import { WebSocketModule } from '../websocket/websocket.module';
 import { DevicesController } from './devices.controller';
@@ -8,7 +8,7 @@ import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 
 @Module({
-  imports: [DatabaseModule, WebSocketModule],
+  imports: [DatabaseModule, forwardRef(() => WebSocketModule)],
   controllers: [DevicesController],
   providers: [
     DevicesService,

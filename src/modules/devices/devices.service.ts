@@ -1,4 +1,4 @@
-import { Injectable, Inject } from '@nestjs/common';
+import { Injectable, Inject, forwardRef } from '@nestjs/common';
 import { InfluxService } from '../../database/services/influx.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
@@ -12,7 +12,7 @@ export class DevicesService {
     @Inject('INFLUXDB_SERVICE') public influxService: InfluxService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
     @Inject('POSTGRES_SERVICE') private postgresService: PostgresService,
-    private websocketGateway: WebSocketGateway,
+    @Inject(forwardRef(() => WebSocketGateway)) private websocketGateway: WebSocketGateway,
   ) {}
 
   async updateDeviceStatus(statusUpdate: DeviceStatusUpdateDto): Promise<void> {

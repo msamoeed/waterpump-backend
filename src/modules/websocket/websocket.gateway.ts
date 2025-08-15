@@ -6,7 +6,7 @@ import {
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { Logger, Injectable } from '@nestjs/common';
+import { Logger, Injectable, Inject, forwardRef } from '@nestjs/common';
 import {
   ServerToClientEvents,
   ClientToServerEvents,
@@ -38,7 +38,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
   constructor(
     private motorService: MotorService,
-    private devicesService: DevicesService,
+    @Inject(forwardRef(() => DevicesService)) private devicesService: DevicesService,
     private redisService: RedisService,
   ) {}
 
