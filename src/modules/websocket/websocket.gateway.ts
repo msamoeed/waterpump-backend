@@ -339,8 +339,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
 
       return {
         device_id: deviceId,
-        motor_state: {
-       
+        motor_state: motorState ? {
           motorRunning: motorState.motorRunning,
           controlMode: motorState.controlMode,
           targetModeActive: motorState.targetModeActive,
@@ -360,8 +359,11 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
           pendingTargetActive: motorState.pendingTargetActive,
           pendingTargetLevel: motorState.pendingTargetLevel,
           pendingCommandId: motorState.pendingCommandId,
-          pendingCommandTimestamp: motorState.pendingCommandTimestamp ? motorState.pendingCommandTimestamp.toISOString() : undefined,
-        },
+          pendingCommandTimestamp: motorState.pendingCommandTimestamp ? 
+            (motorState.pendingCommandTimestamp instanceof Date ? 
+              motorState.pendingCommandTimestamp.toISOString() : 
+              motorState.pendingCommandTimestamp) : undefined,
+        } : null,
         device_status: deviceStatus,
         alerts,
         timestamp: new Date().toISOString(),

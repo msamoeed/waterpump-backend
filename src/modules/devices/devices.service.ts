@@ -163,20 +163,41 @@ export class DevicesService {
     // Try to get from Redis cache first
     const cachedStatus = await this.redisService.getDeviceStatus(deviceId);
     
+    let statusData;
     if (cachedStatus) {
-      const statusData = JSON.parse(cachedStatus);
+      statusData = JSON.parse(cachedStatus);
       // Transform old format with single 'pump' field to new dual pump format
-      return this.transformToNewFormat(statusData);
+      statusData = this.transformToNewFormat(statusData);
+    } else {
+      // Fallback to InfluxDB for recent data
+      const influxData = await this.influxService.getLatestDeviceData(deviceId);
+      
+      if (influxData && influxData.length > 0) {
+        statusData = this.formatInfluxData(deviceId, influxData);
+      }
     }
 
-    // Fallback to InfluxDB for recent data
-    const influxData = await this.influxService.getLatestDeviceData(deviceId);
-    
-    if (influxData && influxData.length > 0) {
-      return this.formatInfluxData(deviceId, influxData);
+    // Always update roof pump status based on current motor state
+    if (statusData) {
+      try {
+        const motorState = await this.redisService.getMotorState(deviceId);
+        if (motorState) {
+          const motorData = JSON.parse(motorState);
+          // Roof pump status is controlled by motor state
+          if (statusData.roof_pump) {
+            statusData.roof_pump.running = motorData.motorRunning || false;
+            if (motorData.motorRunning) {
+              statusData.roof_pump.current_amps = motorData.currentAmps || statusData.roof_pump.current_amps || 3.5;
+              statusData.roof_pump.power_watts = motorData.powerWatts || statusData.roof_pump.power_watts || 750;
+            }
+          }
+        }
+      } catch (error) {
+        console.error(`Failed to get motor state for roof pump status: ${error.message}`);
+      }
     }
 
-    return null;
+    return statusData;
   }
 
   async getAllDevicesStatus(): Promise<Record<string, any>> {
@@ -464,7 +485,11 @@ export class DevicesService {
         const pump = point.pump_id === 'ground' ? 'ground_pump' : 'roof_pump';
         if (point._field === 'current_amps') formatted[pump].current_amps = point._value;
         if (point._field === 'power_watts') formatted[pump].power_watts = point._value;
-        if (point._field === 'running') formatted[pump].running = point._value;
+        // Only set running status for ground pump from InfluxDB
+        // Roof pump running status will be set from motor state in getCurrentStatus
+        if (point._field === 'running' && pump === 'ground_pump') {
+          formatted[pump].running = point._value;
+        }
         if (point._field === 'protection_active') formatted[pump].protection_active = point._value;
         if (point._field === 'manual_override') formatted[pump].manual_override = point._value;
         if (point._field === 'overcurrent_protection') formatted[pump].overcurrent_protection = point._value;
@@ -508,7 +533,8 @@ export class DevicesService {
         },
         roof_pump: {
           ...statusData.pump,
-          // Roof pump runs when main pump is on (assuming this is the roof pump)
+          // Roof pump status will be overridden by motor state in getCurrentStatus
+          // This is just a fallback from old cached data
           running: statusData.pump.running,
         },
       };
