@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { MotorController } from './motor.controller';
 import { MotorService } from './motor.service';
@@ -12,7 +12,7 @@ import { DevicesModule } from '../devices/devices.module';
   imports: [
     TypeOrmModule.forFeature([MotorState]),
     DatabaseModule,
-    DevicesModule,
+    forwardRef(() => DevicesModule),
   ],
   controllers: [MotorController],
   providers: [MotorService, MotorTasksService, SensorMonitorService],

@@ -47,7 +47,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   private sensorConnectionStates: Map<string, { ground: { connected: boolean; working: boolean }; roof: { connected: boolean; working: boolean } }> = new Map();
 
   constructor(
-    private motorService: MotorService,
+    @Inject(forwardRef(() => MotorService)) private motorService: MotorService,
     @Inject(forwardRef(() => DevicesService)) private devicesService: DevicesService,
     private redisService: RedisService,
     private oneSignalService: OneSignalService,

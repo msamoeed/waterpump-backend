@@ -13,7 +13,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
 
   constructor(
     private readonly motorService: MotorService,
-    private readonly devicesService: DevicesService,
+    @Inject(forwardRef(() => DevicesService)) private readonly devicesService: DevicesService,
     @Inject(forwardRef(() => WebSocketGateway)) private readonly websocketGateway: WebSocketGateway,
     private readonly redisService: RedisService,
     private readonly postgresService: PostgresService,

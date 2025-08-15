@@ -5,7 +5,7 @@ import { DevicesModule } from '../devices/devices.module';
 import { DatabaseModule } from '../../database/database.module';
 
 @Module({
-  imports: [MotorModule, forwardRef(() => DevicesModule), DatabaseModule],
+  imports: [forwardRef(() => MotorModule), forwardRef(() => DevicesModule), DatabaseModule],
   providers: [WebSocketGateway],
   exports: [WebSocketGateway],
 })
