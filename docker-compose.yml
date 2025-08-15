@@ -42,9 +42,7 @@ services:
     ports:
       - "${INFLUXDB_PORT:-8087}:8181"
     volumes:
-      - type: bind
-        source: ./influxdb-data
-        target: /var/lib/influxdb3
+      - influxdb_data:/var/lib/influxdb3
     networks:
       - waterpump-network
     restart: unless-stopped
@@ -90,4 +88,4 @@ volumes:
 
 networks:
   waterpump-network:
-    driver: bridge 
+    driver: bridge
