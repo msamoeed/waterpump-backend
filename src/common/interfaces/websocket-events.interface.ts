@@ -55,6 +55,24 @@ export interface OTACompleteEvent {
   timestamp: string;
 }
 
+export interface ProtectionResetResponseEvent {
+  success: boolean;
+  message?: string;
+  error?: string;
+  device_id: string;
+  reason?: string;
+  timestamp: string;
+}
+
+export interface OTAUpdateResponseEvent {
+  success: boolean;
+  message?: string;
+  error?: string;
+  device_id: string;
+  version?: string;
+  timestamp: string;
+}
+
 export interface DeviceLogEvent {
   device_id: string;
   level: 'debug' | 'info' | 'warn' | 'error';
@@ -166,6 +184,8 @@ export interface ServerToClientEvents {
   device_log: (data: DeviceLogEvent) => void;
   system_data: (data: SystemDataEvent) => void;
   motor_control_response: (data: MotorControlResponseEvent) => void;
+  protection_reset_response: (data: ProtectionResetResponseEvent) => void;
+  ota_update_response: (data: OTAUpdateResponseEvent) => void;
 }
 
 export interface ClientToServerEvents {
@@ -177,4 +197,6 @@ export interface ClientToServerEvents {
   ota_progress: (data: { device_id: string; progress: number; status: string }) => void;
   ota_complete: (data: { device_id: string; success: boolean; version: string; error?: string }) => void;
   motor_control: (data: { device_id: string; action: 'start' | 'stop'; reason?: string }) => void;
+  reset_protection: (data: { device_id: string; reason?: string }) => void;
+  ota_update_response: (data: { success: boolean; message?: string; error?: string; device_id: string; version?: string; timestamp: string }) => void;
 } 

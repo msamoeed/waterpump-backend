@@ -16,6 +16,7 @@ import {
   DeviceOfflineEvent,
   OTAUpdateEvent,
   SystemDataEvent,
+  ProtectionResetResponseEvent,
 } from '../../common/interfaces/websocket-events.interface';
 import { MotorService } from '../motor/motor.service';
 import { DevicesService } from '../devices/devices.service';
@@ -241,6 +242,79 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
       error: data.error,
       timestamp: new Date().toISOString(),
     });
+  }
+
+  @SubscribeMessage('reset_protection')
+  async handleResetProtection(client: Socket, data: { device_id: string; reason?: string }) {
+    this.logger.log(`Protection reset requested for device ${data.device_id}: ${data.reason || 'No reason provided'}`);
+    
+    try {
+      // Get current motor state to check if protection is actually active
+      const motorState = await this.motorService.getMotorState(data.device_id);
+      
+      if (!motorState) {
+        client.emit('protection_reset_response', {
+          success: false,
+          error: 'Device not found or motor state unavailable',
+          device_id: data.device_id,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      if (!motorState.protectionActive) {
+        client.emit('protection_reset_response', {
+          success: false,
+          error: 'Protection is not currently active',
+          device_id: data.device_id,
+          timestamp: new Date().toISOString(),
+        });
+        return;
+      }
+
+      // Send protection reset command to the device via motor service
+      const result = await this.motorService.processMotorCommand({
+        action: 'reset_protection',
+        reason: data.reason || 'Manual protection reset from mobile app',
+        device_id: data.device_id,
+        source: 'mobile',
+      });
+
+      if (result.success) {
+        // Send success response to client
+        client.emit('protection_reset_response', {
+          success: true,
+          message: 'Protection reset command sent successfully',
+          device_id: data.device_id,
+          reason: data.reason || 'Manual protection reset from mobile app',
+          timestamp: new Date().toISOString(),
+        });
+
+        // Emit updated system data to all subscribers
+        this.emitSystemDataUpdate(data.device_id);
+        
+        this.logger.log(`Protection reset successful for device ${data.device_id}`);
+      } else {
+        // Send failure response to client
+        client.emit('protection_reset_response', {
+          success: false,
+          error: 'Failed to reset protection',
+          device_id: data.device_id,
+          timestamp: new Date().toISOString(),
+        });
+        
+        this.logger.error(`Protection reset failed for device ${data.device_id}`);
+      }
+      
+    } catch (error) {
+      this.logger.error(`Protection reset error for device ${data.device_id}: ${error.message}`);
+      client.emit('protection_reset_response', {
+        success: false,
+        error: error.message,
+        device_id: data.device_id,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
 
   // Methods to emit events to connected clients
