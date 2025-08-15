@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   # PostgreSQL Database
   postgres:
@@ -39,15 +41,19 @@ services:
       --data-dir=/var/lib/influxdb3/data
       --plugin-dir=/var/lib/influxdb3/plugins
       --without-auth
+      --grpc-bind-address=0.0.0.0:8181
     ports:
-      - "${INFLUXDB_PORT:-8087}:8181"
+      - "${INFLUXDB_PORT:-8181}:8181"
     volumes:
-      - type: bind
-        source: ./influxdb-data
-        target: /var/lib/influxdb3
+      - influxdb_data:/var/lib/influxdb3
     networks:
       - waterpump-network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "0.0.0.0", "8181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # Nest.js Backend API
   api:
@@ -90,4 +96,4 @@ volumes:
 
 networks:
   waterpump-network:
-    driver: bridge 
+    driver: bridge
