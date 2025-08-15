@@ -5,57 +5,109 @@ import * as OneSignal from '@onesignal/node-onesignal';
 export class OneSignalService {
   private readonly logger = new Logger(OneSignalService.name);
   private client: OneSignal.DefaultApi;
+  private isEnabled: boolean;
 
   constructor() {
-    // Initialize OneSignal client
-    const configuration = OneSignal.createConfiguration({
-      restApiKey: process.env.ONESIGNAL_REST_API_KEY,
-    });
+    // Check if OneSignal is properly configured
+    this.isEnabled = !!(process.env.ONESIGNAL_REST_API_KEY && process.env.ONESIGNAL_APP_ID);
     
-    this.client = new OneSignal.DefaultApi(configuration);
+    if (!this.isEnabled) {
+      this.logger.warn('OneSignal is not configured. Notifications will be logged but not sent.');
+      return;
+    }
+
+    try {
+      // Initialize OneSignal client using the correct configuration pattern
+      const configuration = OneSignal.createConfiguration({
+        restApiKey: process.env.ONESIGNAL_REST_API_KEY,
+      });
+      
+      this.client = new OneSignal.DefaultApi(configuration);
+      this.logger.log('OneSignal client initialized successfully');
+    } catch (error) {
+      this.logger.error(`Failed to initialize OneSignal client: ${error.message}`);
+      this.isEnabled = false;
+    }
   }
 
   /**
    * Send notification to all subscribed users
    */
   async sendNotificationToAll(title: string, message: string, data?: Record<string, any>) {
+    if (!this.isEnabled || !this.client) {
+      this.logger.log(`[OneSignal Disabled] Notification would be sent: ${title} - ${message}`);
+      return null;
+    }
+
     try {
-      const notification = {
-        app_id: process.env.ONESIGNAL_APP_ID,
-        included_segments: ['Subscribed Users'],
-        headings: { en: title },
-        contents: { en: message },
-        data: data || {},
-      };
+      // Create notification using the correct SDK pattern
+      const notification = new OneSignal.Notification();
+      notification.app_id = process.env.ONESIGNAL_APP_ID;
+      notification.included_segments = ['Subscribed Users'];
+      notification.headings = { en: title };
+      notification.contents = { en: message };
+      notification.data = data || {};
 
       const result = await this.client.createNotification(notification);
       this.logger.log(`Notification sent successfully: ${result.id}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to send notification: ${error.message}`);
-      throw error;
+      // Handle specific OneSignal API errors
+      if (error.message.includes('mediaType text/plain')) {
+        this.logger.error('OneSignal API returned unsupported media type. This may be a temporary API issue.');
+      } else if (error.message.includes('Unauthorized') || error.message.includes('401')) {
+        this.logger.error('OneSignal API key is invalid or expired');
+        this.isEnabled = false;
+      } else if (error.message.includes('Rate limit')) {
+        this.logger.warn('OneSignal rate limit reached, notification skipped');
+      } else {
+        this.logger.error(`Failed to send notification: ${error.message}`);
+      }
+      
+      // Log the notification locally for debugging
+      this.logger.log(`[Failed] Notification details: ${title} - ${message}`);
+      return null;
     }
   }
 
   /**
    * Send notification to specific users by their OneSignal player IDs
+   * Note: The new SDK uses include_subscription_ids instead of include_player_ids
    */
   async sendNotificationToUsers(playerIds: string[], title: string, message: string, data?: Record<string, any>) {
+    if (!this.isEnabled || !this.client) {
+      this.logger.log(`[OneSignal Disabled] Notification would be sent to ${playerIds.length} users: ${title} - ${message}`);
+      return null;
+    }
+
     try {
-      const notification = {
-        app_id: process.env.ONESIGNAL_APP_ID,
-        include_player_ids: playerIds,
-        headings: { en: title },
-        contents: { en: message },
-        data: data || {},
-      };
+      // Create notification using the correct SDK pattern
+      const notification = new OneSignal.Notification();
+      notification.app_id = process.env.ONESIGNAL_APP_ID;
+      notification.include_subscription_ids = playerIds; // Use the correct property name
+      notification.headings = { en: title };
+      notification.contents = { en: message };
+      notification.data = data || {};
 
       const result = await this.client.createNotification(notification);
       this.logger.log(`Notification sent to ${playerIds.length} users: ${result.id}`);
       return result;
     } catch (error) {
-      this.logger.error(`Failed to send notification to users: ${error.message}`);
-      throw error;
+      // Handle specific OneSignal API errors
+      if (error.message.includes('mediaType text/plain')) {
+        this.logger.error('OneSignal API returned unsupported media type. This may be a temporary API issue.');
+      } else if (error.message.includes('Unauthorized') || error.message.includes('401')) {
+        this.logger.error('OneSignal API key is invalid or expired');
+        this.isEnabled = false;
+      } else if (error.message.includes('Rate limit')) {
+        this.logger.warn('OneSignal rate limit reached, notification skipped');
+      } else {
+        this.logger.error(`Failed to send notification to users: ${error.message}`);
+      }
+      
+      // Log the notification locally for debugging
+      this.logger.log(`[Failed] Notification to ${playerIds.length} users: ${title} - ${message}`);
+      return null;
     }
   }
 
@@ -137,5 +189,22 @@ export class OneSignalService {
     };
 
     await this.sendNotificationToAll(title, message, data);
+  }
+
+  /**
+   * Check if OneSignal service is enabled
+   */
+  isServiceEnabled(): boolean {
+    return this.isEnabled;
+  }
+
+  /**
+   * Re-enable the service (useful for recovery after errors)
+   */
+  reEnable(): void {
+    if (process.env.ONESIGNAL_REST_API_KEY && process.env.ONESIGNAL_APP_ID) {
+      this.isEnabled = true;
+      this.logger.log('OneSignal service re-enabled');
+    }
   }
 }
