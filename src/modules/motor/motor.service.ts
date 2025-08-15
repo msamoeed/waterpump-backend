@@ -144,8 +144,13 @@ export class MotorService {
 
     // Set pending state for the command
     const pendingState = this.calculatePendingState(command, mcuCommand.command_id);
+    
+    // Also set optimistic state for immediate UI feedback
+    const optimisticState = this.calculateOptimisticState(command);
+    
     const updatedState = await this.updateMotorState(deviceId, {
       ...pendingState,
+      ...optimisticState, // Immediate optimistic updates
       last_command_source: command.source || 'api',
       last_command_reason: command.reason || 'API command',
     });
@@ -345,6 +350,41 @@ export class MotorService {
     }
 
     return pendingState;
+  }
+
+  /**
+   * Calculate optimistic state changes for immediate UI feedback
+   */
+  private calculateOptimisticState(command: MotorControlCommandDto): Partial<MotorStateUpdateDto> {
+    const optimisticState: Partial<MotorStateUpdateDto> = {};
+
+    switch (command.action) {
+      case 'start':
+        optimisticState.motor_running = true;
+        optimisticState.target_mode_active = false;
+        break;
+      case 'stop':
+        optimisticState.motor_running = false;
+        optimisticState.target_mode_active = false;
+        break;
+      case 'target':
+        optimisticState.motor_running = true;
+        optimisticState.target_mode_active = true;
+        optimisticState.current_target_level = command.target_level;
+        optimisticState.target_description = `Target ${command.target_level}"`;
+        break;
+      case 'auto':
+        optimisticState.control_mode = 'auto';
+        break;
+      case 'manual':
+        optimisticState.control_mode = 'manual';
+        break;
+      case 'reset_protection':
+        optimisticState.protection_active = false;
+        break;
+    }
+
+    return optimisticState;
   }
 
   private checkPendingStateResolution(currentState: MotorState, heartbeat: MotorHeartbeatDto): Partial<MotorStateUpdateDto> {
