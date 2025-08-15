@@ -146,6 +146,15 @@ export interface SystemDataEvent {
   timestamp: string;
 }
 
+export interface MotorControlResponseEvent {
+  device_id: string;
+  success: boolean;
+  action: 'start' | 'stop';
+  message: string;
+  motor_state?: any; // Updated motor state after command
+  timestamp: string;
+}
+
 export interface ServerToClientEvents {
   device_update: (data: DeviceUpdateEvent) => void;
   pump_event: (data: PumpEvent) => void;
@@ -156,6 +165,7 @@ export interface ServerToClientEvents {
   ota_update_complete: (data: OTACompleteEvent) => void;
   device_log: (data: DeviceLogEvent) => void;
   system_data: (data: SystemDataEvent) => void;
+  motor_control_response: (data: MotorControlResponseEvent) => void;
 }
 
 export interface ClientToServerEvents {
@@ -166,4 +176,5 @@ export interface ClientToServerEvents {
   request_ota_update: (deviceId: string) => void;
   ota_progress: (data: { device_id: string; progress: number; status: string }) => void;
   ota_complete: (data: { device_id: string; success: boolean; version: string; error?: string }) => void;
+  motor_control: (data: { device_id: string; action: 'start' | 'stop'; reason?: string }) => void;
 } 

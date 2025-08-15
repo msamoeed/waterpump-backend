@@ -115,6 +115,43 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
+  @SubscribeMessage('motor_control')
+  async handleMotorControl(client: Socket, data: { device_id: string; action: 'start' | 'stop'; reason?: string }) {
+    this.logger.log(`Motor control request for device ${data.device_id}: ${data.action}`);
+    
+    try {
+      const result = await this.motorService.processMotorCommand({
+        action: data.action,
+        reason: data.reason || `${data.action === 'start' ? 'Manual start' : 'Manual stop'} from mobile app`,
+        device_id: data.device_id,
+        source: 'mobile',
+      });
+
+      // Send response back to client
+      client.emit('motor_control_response', {
+        device_id: data.device_id,
+        success: result.success,
+        action: data.action,
+        message: `Motor ${data.action} command processed successfully`,
+        motor_state: result.state,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Emit updated system data to all subscribers
+      this.emitSystemDataUpdate(data.device_id);
+      
+    } catch (error) {
+      this.logger.error(`Motor control error for device ${data.device_id}: ${error.message}`);
+      client.emit('motor_control_response', {
+        device_id: data.device_id,
+        success: false,
+        action: data.action,
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
   @SubscribeMessage('request_ota_update')
   async handleRequestOTAUpdate(client: Socket, deviceId: string) {
     this.logger.log(`OTA update requested for device ${deviceId}`);
