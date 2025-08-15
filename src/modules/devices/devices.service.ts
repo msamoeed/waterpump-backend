@@ -416,7 +416,20 @@ export class DevicesService {
         sensor_working: false,
         water_supply_on: false,
       },
-      pump: {
+      ground_pump: {
+        running: false,
+        manual_override: false,
+        current_amps: 0,
+        power_watts: 0,
+        daily_consumption: 0,
+        hourly_consumption: 0,
+        runtime_minutes: 0,
+        total_runtime_hours: 0,
+        protection_active: false,
+        overcurrent_protection: false,
+        overtime_protection: false,
+      },
+      roof_pump: {
         running: false,
         manual_override: false,
         current_amps: 0,
@@ -445,10 +458,16 @@ export class DevicesService {
         if (point._field === 'connected') formatted[tank].connected = point._value;
         if (point._field === 'sensor_working') formatted[tank].sensor_working = point._value;
       } else if (point._measurement === 'pump_metrics') {
-        if (point._field === 'current_amps') formatted.pump.current_amps = point._value;
-        if (point._field === 'power_watts') formatted.pump.power_watts = point._value;
-        if (point._field === 'running') formatted.pump.running = point._value;
-        if (point._field === 'protection_active') formatted.pump.protection_active = point._value;
+        const pump = point.pump_id === 'ground' ? 'ground_pump' : 'roof_pump';
+        if (point._field === 'current_amps') formatted[pump].current_amps = point._value;
+        if (point._field === 'power_watts') formatted[pump].power_watts = point._value;
+        if (point._field === 'running') formatted[pump].running = point._value;
+        if (point._field === 'protection_active') formatted[pump].protection_active = point._value;
+        if (point._field === 'manual_override') formatted[pump].manual_override = point._value;
+        if (point._field === 'overcurrent_protection') formatted[pump].overcurrent_protection = point._value;
+        if (point._field === 'overtime_protection') formatted[pump].overtime_protection = point._value;
+        if (point._field === 'runtime_minutes') formatted[pump].runtime_minutes = point._value;
+        if (point._field === 'total_runtime_hours') formatted[pump].total_runtime_hours = point._value;
       }
     }
 

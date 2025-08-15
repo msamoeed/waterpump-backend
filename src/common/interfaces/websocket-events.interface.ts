@@ -103,7 +103,20 @@ export interface SystemDataEvent {
       sensor_working: boolean;
       water_supply_on: boolean;
     };
-    pump: {
+    ground_pump: {
+      running: boolean;
+      manual_override: boolean;
+      current_amps: number;
+      power_watts: number;
+      daily_consumption: number;
+      hourly_consumption: number;
+      runtime_minutes: number;
+      total_runtime_hours: number;
+      protection_active: boolean;
+      overcurrent_protection: boolean;
+      overtime_protection: boolean;
+    };
+    roof_pump: {
       running: boolean;
       manual_override: boolean;
       current_amps: number;
