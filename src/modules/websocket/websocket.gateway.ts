@@ -17,10 +17,14 @@ import {
   OTAUpdateEvent,
   SystemDataEvent,
   ProtectionResetResponseEvent,
+  OTAUpdateResponseEvent,
+  WaterSupplyNotificationEvent,
+  SensorStatusNotificationEvent,
 } from '../../common/interfaces/websocket-events.interface';
 import { MotorService } from '../motor/motor.service';
 import { DevicesService } from '../devices/devices.service';
 import { RedisService } from '../../database/services/redis.service';
+import { OneSignalService } from '../../common/services/onesignal.service';
 
 @Injectable()
 @NestWebSocketGateway({
@@ -37,10 +41,15 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   private connectedClients: Map<string, Set<string>> = new Map(); // deviceId -> Set of clientIds
   private otaUpdateSessions: Map<string, any> = new Map(); // deviceId -> OTA session data
 
+  // Notification tracking for state changes
+  private waterSupplyStates: Map<string, { ground: boolean; roof: boolean; system: boolean }> = new Map();
+  private sensorConnectionStates: Map<string, { ground: { connected: boolean; working: boolean }; roof: { connected: boolean; working: boolean } }> = new Map();
+
   constructor(
     private motorService: MotorService,
     @Inject(forwardRef(() => DevicesService)) private devicesService: DevicesService,
     private redisService: RedisService,
+    private oneSignalService: OneSignalService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -353,14 +362,170 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     this.server.to(`device_${deviceId}`).emit('device_log', payload);
   }
 
+  // New notification methods
+  emitWaterSupplyNotification(deviceId: string, tankId: 'ground' | 'roof' | 'system', currentState: boolean, previousState: boolean, reason?: string) {
+    const notification: WaterSupplyNotificationEvent = {
+      device_id: deviceId,
+      tank_id: tankId,
+      water_supply_on: currentState,
+      previous_state: previousState,
+      timestamp: new Date().toISOString(),
+      reason: reason,
+    };
+    
+    this.server.to(`device_${deviceId}`).emit('water_supply_notification', notification);
+    this.logger.log(`Water supply notification emitted for device ${deviceId}, tank ${tankId}: ${previousState} -> ${currentState}`);
+    
+    // Send OneSignal push notification
+    this.oneSignalService.sendWaterSupplyNotification(deviceId, tankId, currentState, previousState);
+  }
+
+  emitSensorStatusNotification(deviceId: string, tankId: 'ground' | 'roof', connected: boolean, working: boolean, previousConnected: boolean, previousWorking: boolean, reason?: string) {
+    const notification: SensorStatusNotificationEvent = {
+      device_id: deviceId,
+      tank_id: tankId,
+      sensor_connected: connected,
+      sensor_working: working,
+      previous_connected: previousConnected,
+      previous_working: previousWorking,
+      timestamp: new Date().toISOString(),
+      reason: reason,
+    };
+    
+    this.server.to(`device_${deviceId}`).emit('sensor_status_notification', notification);
+    this.logger.log(`Sensor status notification emitted for device ${deviceId}, tank ${tankId}: connected ${previousConnected}->${connected}, working ${previousWorking}->${working}`);
+    
+    // Send OneSignal push notification
+    this.oneSignalService.sendSensorStatusNotification(deviceId, tankId, connected, working, previousConnected, previousWorking);
+  }
+
   async emitSystemDataUpdate(deviceId: string) {
     try {
       const systemData = await this.fetchSystemData(deviceId);
       this.server.to(`system_data_${deviceId}`).emit('system_data', systemData);
       this.logger.log(`System data update emitted for device ${deviceId}`);
+      
+      // Check for state changes and emit notifications
+      this.checkAndEmitNotifications(deviceId, systemData);
     } catch (error) {
       this.logger.error(`Failed to emit system data update for device ${deviceId}: ${error.message}`);
     }
+  }
+
+  // Check for state changes and emit notifications
+  private checkAndEmitNotifications(deviceId: string, systemData: SystemDataEvent) {
+    // Check water supply status changes
+    this.checkWaterSupplyChanges(deviceId, systemData);
+    
+    // Check sensor status changes
+    this.checkSensorStatusChanges(deviceId, systemData);
+  }
+
+  private checkWaterSupplyChanges(deviceId: string, systemData: SystemDataEvent) {
+    const currentStates = {
+      ground: systemData.device_status?.ground_tank?.water_supply_on || false,
+      roof: systemData.device_status?.roof_tank?.water_supply_on || false,
+      system: systemData.device_status?.system?.water_supply_active || false,
+    };
+
+    const previousStates = this.waterSupplyStates.get(deviceId) || { ground: false, roof: false, system: false };
+
+    // Check ground tank water supply changes
+    if (currentStates.ground !== previousStates.ground) {
+      this.emitWaterSupplyNotification(
+        deviceId,
+        'ground',
+        currentStates.ground,
+        previousStates.ground,
+        currentStates.ground ? 'Water supply activated' : 'Water supply deactivated'
+      );
+    }
+
+    // Check roof tank water supply changes
+    if (currentStates.roof !== previousStates.roof) {
+      this.emitWaterSupplyNotification(
+        deviceId,
+        'roof',
+        currentStates.roof,
+        previousStates.roof,
+        currentStates.roof ? 'Water supply activated' : 'Water supply deactivated'
+      );
+    }
+
+    // Check system water supply changes
+    if (currentStates.system !== previousStates.system) {
+      this.emitWaterSupplyNotification(
+        deviceId,
+        'system',
+        currentStates.system,
+        previousStates.system,
+        currentStates.system ? 'System water supply active' : 'System water supply inactive'
+      );
+    }
+
+    // Update stored states
+    this.waterSupplyStates.set(deviceId, currentStates);
+  }
+
+  private checkSensorStatusChanges(deviceId: string, systemData: SystemDataEvent) {
+    const currentGroundStatus = {
+      connected: systemData.device_status?.ground_tank?.connected || false,
+      working: systemData.device_status?.ground_tank?.sensor_working || false,
+    };
+
+    const currentRoofStatus = {
+      connected: systemData.device_status?.roof_tank?.connected || false,
+      working: systemData.device_status?.roof_tank?.sensor_working || false,
+    };
+
+    const previousStates = this.sensorConnectionStates.get(deviceId) || {
+      ground: { connected: false, working: false },
+      roof: { connected: false, working: false },
+    };
+
+    // Check ground tank sensor changes
+    if (currentGroundStatus.connected !== previousStates.ground.connected || 
+        currentGroundStatus.working !== previousStates.ground.working) {
+      this.emitSensorStatusNotification(
+        deviceId,
+        'ground',
+        currentGroundStatus.connected,
+        currentGroundStatus.working,
+        previousStates.ground.connected,
+        previousStates.ground.working,
+        this.getSensorStatusChangeReason(currentGroundStatus, previousStates.ground)
+      );
+    }
+
+    // Check roof tank sensor changes
+    if (currentRoofStatus.connected !== previousStates.roof.connected || 
+        currentRoofStatus.working !== previousStates.roof.working) {
+      this.emitSensorStatusNotification(
+        deviceId,
+        'roof',
+        currentRoofStatus.connected,
+        currentRoofStatus.working,
+        previousStates.roof.connected,
+        previousStates.roof.working,
+        this.getSensorStatusChangeReason(currentRoofStatus, previousStates.roof)
+      );
+    }
+
+    // Update stored states
+    this.sensorConnectionStates.set(deviceId, {
+      ground: currentGroundStatus,
+      roof: currentRoofStatus,
+    });
+  }
+
+  private getSensorStatusChangeReason(current: { connected: boolean; working: boolean }, previous: { connected: boolean; working: boolean }): string {
+    if (current.connected !== previous.connected) {
+      return current.connected ? 'Sensor reconnected' : 'Sensor disconnected';
+    }
+    if (current.working !== previous.working) {
+      return current.working ? 'Sensor working again' : 'Sensor malfunction detected';
+    }
+    return 'Status change detected';
   }
 
   // Utility methods

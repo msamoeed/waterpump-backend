@@ -73,6 +73,26 @@ export interface OTAUpdateResponseEvent {
   timestamp: string;
 }
 
+export interface WaterSupplyNotificationEvent {
+  device_id: string;
+  tank_id: 'ground' | 'roof' | 'system';
+  water_supply_on: boolean;
+  previous_state: boolean;
+  timestamp: string;
+  reason?: string;
+}
+
+export interface SensorStatusNotificationEvent {
+  device_id: string;
+  tank_id: 'ground' | 'roof';
+  sensor_connected: boolean;
+  sensor_working: boolean;
+  previous_connected: boolean;
+  previous_working: boolean;
+  timestamp: string;
+  reason?: string;
+}
+
 export interface DeviceLogEvent {
   device_id: string;
   level: 'debug' | 'info' | 'warn' | 'error';
@@ -186,6 +206,8 @@ export interface ServerToClientEvents {
   motor_control_response: (data: MotorControlResponseEvent) => void;
   protection_reset_response: (data: ProtectionResetResponseEvent) => void;
   ota_update_response: (data: OTAUpdateResponseEvent) => void;
+  water_supply_notification: (data: WaterSupplyNotificationEvent) => void;
+  sensor_status_notification: (data: SensorStatusNotificationEvent) => void;
 }
 
 export interface ClientToServerEvents {

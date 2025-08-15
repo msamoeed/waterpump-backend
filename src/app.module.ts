@@ -7,6 +7,7 @@ import { WebSocketModule } from './modules/websocket/websocket.module';
 import { HealthModule } from './modules/health/health.module';
 import { MotorModule } from './modules/motor/motor.module';
 import { DatabaseModule } from './database/database.module';
+import { OneSignalService } from './common/services/onesignal.service';
 
 @Module({
   imports: [
@@ -23,6 +24,6 @@ import { DatabaseModule } from './database/database.module';
     MotorModule,
   ],
   controllers: [],
-  providers: [],
+  providers: [OneSignalService],
 })
 export class AppModule {} 
