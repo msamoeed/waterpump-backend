@@ -65,26 +65,30 @@ export interface DeviceLogEvent {
 export interface SystemDataEvent {
   device_id: string;
   motor_state: {
-    motorRunning: boolean;
-    controlMode: 'auto' | 'manual';
-    targetModeActive: boolean;
-    currentTargetLevel?: number;
-    targetDescription?: string;
-    protectionActive: boolean;
-    currentAmps: number;
-    powerWatts: number;
-    runtimeMinutes: number;
-    totalRuntimeHours: number;
-    mcuOnline: boolean;
-    lastCommandSource?: string;
-    lastCommandReason?: string;
+    device_id?: string;
+    motor_running: boolean;
+    control_mode: 'auto' | 'manual';
+    target_mode_active: boolean;
+    current_target_level?: number;
+    target_description?: string;
+    protection_active: boolean;
+    current_amps: number;
+    power_watts: number;
+    runtime_minutes: number;
+    total_runtime_hours: number;
+    mcu_online: boolean;
+    last_command_source?: string;
+    last_command_reason?: string;
+    created_at?: string;
+    updated_at?: string;
+    last_heartbeat?: string;
     // Pending states
-    pendingMotorRunning?: boolean;
-    pendingControlMode?: 'auto' | 'manual';
-    pendingTargetActive?: boolean;
-    pendingTargetLevel?: number;
-    pendingCommandId?: string;
-    pendingCommandTimestamp?: string;
+    pending_motor_running?: boolean;
+    pending_control_mode?: 'auto' | 'manual';
+    pending_target_active?: boolean;
+    pending_target_level?: number;
+    pending_command_id?: string;
+    pending_command_timestamp?: string;
   };
   device_status: {
     ground_tank: {
