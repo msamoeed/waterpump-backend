@@ -23,6 +23,9 @@ export class MotorState {
   @Column({ name: 'protection_active', default: false })
   protectionActive: boolean;
 
+  @Column({ name: 'buzzer_muted', default: false })
+  buzzerMuted: boolean;
+
   @Column({ name: 'last_command_source', nullable: true })
   lastCommandSource?: string; // 'mobile', 'mcu', 'api', 'auto'
 

@@ -69,6 +69,7 @@ export class MotorService {
     if (updateData.current_target_level !== undefined) mappedUpdateData.currentTargetLevel = updateData.current_target_level;
     if (updateData.target_description !== undefined) mappedUpdateData.targetDescription = updateData.target_description;
     if (updateData.protection_active !== undefined) mappedUpdateData.protectionActive = updateData.protection_active;
+    if (updateData.buzzer_muted !== undefined) mappedUpdateData.buzzerMuted = updateData.buzzer_muted;
     if (updateData.current_amps !== undefined) mappedUpdateData.currentAmps = updateData.current_amps;
     if (updateData.power_watts !== undefined) mappedUpdateData.powerWatts = updateData.power_watts;
     if (updateData.runtime_minutes !== undefined) mappedUpdateData.runtimeMinutes = updateData.runtime_minutes;
@@ -182,6 +183,7 @@ export class MotorService {
       current_target_level: heartbeat.current_target_level,
       target_description: heartbeat.target_description,
       protection_active: heartbeat.protection_active,
+      buzzer_muted: heartbeat.buzzer_muted,
       current_amps: heartbeat.current_amps,
       power_watts: heartbeat.power_watts,
       runtime_minutes: heartbeat.runtime_minutes,
@@ -259,6 +261,7 @@ export class MotorService {
       controlMode: 'auto',
       targetModeActive: false,
       protectionActive: false,
+      buzzerMuted: false,
       currentAmps: 0,
       powerWatts: 0,
       runtimeMinutes: 0,
@@ -312,6 +315,12 @@ export class MotorService {
         break;
       case 'reset_protection':
         expectedState.protection_active = false;
+        break;
+      case 'enable_buzzer':
+        expectedState.buzzer_muted = false;
+        break;
+      case 'disable_buzzer':
+        expectedState.buzzer_muted = true;
         break;
     }
 
@@ -381,6 +390,12 @@ export class MotorService {
         break;
       case 'reset_protection':
         optimisticState.protection_active = false;
+        break;
+      case 'enable_buzzer':
+        optimisticState.buzzer_muted = false;
+        break;
+      case 'disable_buzzer':
+        optimisticState.buzzer_muted = true;
         break;
     }
 

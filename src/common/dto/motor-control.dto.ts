@@ -6,7 +6,7 @@ export class MotorControlCommandDto {
   device_id?: string;
 
   @IsString()
-  @IsIn(['start', 'stop', 'target', 'auto', 'manual', 'reset_protection'])
+  @IsIn(['start', 'stop', 'target', 'auto', 'manual', 'reset_protection', 'enable_buzzer', 'disable_buzzer'])
   action: string;
 
   @IsNumber()
@@ -53,6 +53,10 @@ export class MotorStateUpdateDto {
   @IsBoolean()
   @IsOptional()
   protection_active?: boolean;
+
+  @IsBoolean()
+  @IsOptional()
+  buzzer_muted?: boolean;
 
   @IsNumber()
   @IsOptional()
@@ -129,6 +133,9 @@ export class MotorHeartbeatDto {
 
   @IsBoolean()
   protection_active: boolean;
+
+  @IsBoolean()
+  buzzer_muted: boolean;
 
   @IsNumber()
   current_amps: number;
