@@ -58,6 +58,7 @@ services:
     environment:
       NODE_ENV: development
       PORT: 3000
+      NODE_OPTIONS: "--max-old-space-size=4096"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -81,6 +82,12 @@ services:
     restart: unless-stopped
     volumes:
       - ./src:/app/src
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
 volumes:
   postgres_data:

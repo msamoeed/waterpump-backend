@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  # PostgreSQL Database (Production)
+  # PostgreSQL Database
   postgres:
     image: postgres:15-alpine
     container_name: waterpump-postgres-prod
@@ -10,114 +10,107 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_PORT:-5436}:5432"
     volumes:
-      - postgres_data_prod:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql/data
     networks:
       - waterpump-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 512M
 
-  # Redis Cache (Production)
+  # Redis Cache
   redis:
     image: redis:7-alpine
     container_name: waterpump-redis-prod
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_PORT:-6380}:6379"
     volumes:
-      - redis_data_prod:/data
+      - redis_data:/data
     networks:
       - waterpump-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M
 
-  # InfluxDB Time Series Database (Production)
+  # InfluxDB 3.3 Core Time Series Database
   influxdb:
-    image: influxdb:2.7-alpine
+    image: influxdb:3.3-core
     container_name: waterpump-influxdb-prod
-    environment:
-      DOCKER_INFLUXDB_INIT_MODE: setup
-      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USERNAME:-admin}
-      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-adminpassword}
-      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-waterpump-org}
-      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-waterpump}
-      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
+    command: >
+      influxdb3
+      serve
+      --node-id=node0
+      --object-store=file
+      --data-dir=/var/lib/influxdb3/data
+      --plugin-dir=/var/lib/influxdb3/plugins
+      --without-auth
     ports:
-      - "${INFLUXDB_PORT:-8086}:8086"
+      - "${INFLUXDB_PORT:-8087}:8181"
     volumes:
-      - influxdb_data_prod:/var/lib/influxdb2
+      - influxdb_data:/var/lib/influxdb3
     networks:
       - waterpump-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
-  # Nest.js Backend API (Production)
+  # Nest.js Backend API
   api:
     build:
       context: .
-      dockerfile: ./Dockerfile
+      dockerfile: Dockerfile
       args:
         NODE_ENV: production
+    container_name: waterpump-api-prod
     environment:
       NODE_ENV: production
       PORT: 3000
+      NODE_OPTIONS: "--max-old-space-size=4096 --optimize-for-size"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      ONESIGNAL_REST_API_KEY: ${ONESIGNAL_REST_API_KEY:-}
       POSTGRES_DB: ${POSTGRES_DB:-waterpump}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      INFLUXDB_URL: http://influxdb:8086
-      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-your-influxdb-token}
-      INFLUXDB_ORG: ${INFLUXDB_ORG:-waterpump-org}
-      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-waterpump}
+      INFLUXDB_URL: http://influxdb:8181
+      INFLUXDB_TOKEN: dummy-token-for-no-auth-mode
+      INFLUXDB_ORG: 
+      INFLUXDB_BUCKET: waterpump
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3002}:3000"
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
+      - postgres
+      - redis
+      - influxdb
     networks:
       - waterpump-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/api/v1/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
     deploy:
-      replicas: 2
       resources:
         limits:
-          memory: 512M
-          cpus: '0.5'
+          memory: 2G
         reservations:
-          memory: 256M
-          cpus: '0.25'
-
-
+          memory: 1G
 
 volumes:
-  postgres_data_prod:
-  redis_data_prod:
-  influxdb_data_prod:
+  postgres_data:
+  redis_data:
+  influxdb_data:
 
 networks:
   waterpump-network:

@@ -141,7 +141,7 @@ export class MotorService {
     };
 
     // Store command in Redis for MCU to pick up
-    await this.redisService.setMotorCommand(deviceId, mcuCommand, 120); // 2 minutes TTL
+    await this.redisService.setMotorCommand(deviceId, mcuCommand, 60); // 1 minute TTL for faster cleanup
 
     // Set pending state for the command
     const pendingState = this.calculatePendingState(command, mcuCommand.command_id);

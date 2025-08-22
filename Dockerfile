@@ -21,5 +21,8 @@ RUN if [ "$NODE_ENV" = "production" ]; then npm run build; fi
 # Expose port
 EXPOSE 3000
 
+# Set Node.js memory options
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
 # Start the application based on environment
 CMD if [ "$NODE_ENV" = "production" ]; then node dist/main.js; else npm run start:dev; fi 
