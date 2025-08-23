@@ -620,9 +620,9 @@ export class DevicesService {
       
       // Handle water levels data (InfluxDB 3.x format)
       if (record.tank_id === 'ground') {
-        dataPoint.groundLevel = record.level_percent || 0;
+        dataPoint.groundLevel = record.level_inches || 0;
       } else if (record.tank_id === 'roof') {
-        dataPoint.roofLevel = record.level_percent || 0;
+        dataPoint.roofLevel = record.level_inches || 0;
       }
     });
 
