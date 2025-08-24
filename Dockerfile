@@ -15,8 +15,8 @@ COPY . .
 # Build arguments
 ARG NODE_ENV=production
 
-# Build the application only for production
-RUN if [ "$NODE_ENV" = "production" ]; then npm run build; fi
+# Build the application
+RUN npm run build
 
 # Expose port
 EXPOSE 3000

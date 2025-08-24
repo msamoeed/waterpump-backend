@@ -1,9 +1,18 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // Configure logging with memory management
+  const logger = new Logger('Bootstrap');
+  
+  // Set log levels to reduce memory usage
+  process.env.LOG_LEVEL = process.env.LOG_LEVEL || 'warn';
+  
+  const app = await NestFactory.create(AppModule, {
+    logger: ['error', 'warn', 'log'], // Limit log levels in production
+    bufferLogs: false, // Disable buffering to prevent memory buildup
+  });
   
   // Enable CORS
   app.enableCors({
@@ -26,9 +35,9 @@ async function bootstrap() {
   const port = process.env.PORT || 3000;
   await app.listen(port);
   
-  console.log(`🚀 Water Pump Backend running on port ${port}`);
-  console.log(`📊 API available at http://localhost:${port}/api/v1`);
-  console.log(`🔌 WebSocket available at ws://localhost:${port}`);
+  logger.log(`🚀 Water Pump Backend running on port ${port}`);
+  logger.log(`📊 API available at http://localhost:${port}/api/v1`);
+  logger.log(`🔌 WebSocket available at ws://localhost:${port}`);
 }
 
 bootstrap(); 

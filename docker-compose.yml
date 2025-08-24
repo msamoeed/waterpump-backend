@@ -59,6 +59,9 @@ services:
       NODE_ENV: development
       PORT: 3000
       NODE_OPTIONS: "--max-old-space-size=4096"
+      LOG_LEVEL: warn
+      LOG_BUFFER_SIZE: 1000
+      LOG_FLUSH_INTERVAL: 5000
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
@@ -88,6 +91,11 @@ services:
           memory: 2G
         reservations:
           memory: 1G
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
 
 volumes:
   postgres_data:
