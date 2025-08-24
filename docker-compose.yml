@@ -54,7 +54,7 @@ services:
       dockerfile: Dockerfile
       args:
         NODE_ENV: development
-    container_name: waterpump-api
+    container_name: waterpump-backend-api
     environment:
       NODE_ENV: development
       PORT: 3000
