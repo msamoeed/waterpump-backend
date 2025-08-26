@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../../database/database.module';
 import { HealthController } from './health.controller';
 import { HealthService } from './health.service';
-import { InfluxService } from '../../database/services/influx.service';
+import { DuckDBService } from '../../database/services/duckdb.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 
@@ -12,8 +12,8 @@ import { PostgresService } from '../../database/services/postgres.service';
   providers: [
     HealthService,
     {
-      provide: 'INFLUXDB_SERVICE',
-      useExisting: InfluxService,
+      provide: 'DUCKDB_SERVICE',
+      useExisting: DuckDBService,
     },
     {
       provide: 'REDIS_SERVICE',

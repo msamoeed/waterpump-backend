@@ -5,7 +5,7 @@ import { Device } from './entities/device.entity';
 import { AlertRule } from './entities/alert-rule.entity';
 import { EventLog } from './entities/event-log.entity';
 import { MotorState } from './entities/motor-state.entity';
-import { InfluxService } from './services/influx.service';
+import { DuckDBService } from './services/duckdb.service';
 import { RedisService } from './services/redis.service';
 import { PostgresService } from './services/postgres.service';
 
@@ -29,13 +29,13 @@ import { PostgresService } from './services/postgres.service';
     TypeOrmModule.forFeature([Device, AlertRule, EventLog, MotorState]),
   ],
   providers: [
-    InfluxService,
+    DuckDBService,
     RedisService,
     PostgresService,
   ],
   exports: [
     TypeOrmModule,
-    InfluxService,
+    DuckDBService,
     RedisService,
     PostgresService,
   ],

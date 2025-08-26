@@ -1,12 +1,12 @@
 import { Controller, Get, Inject } from '@nestjs/common';
 import { HealthService } from './health.service';
-import { InfluxService } from '../../database/services/influx.service';
+import { DuckDBService } from '../../database/services/duckdb.service';
 
 @Controller('health')
 export class HealthController {
   constructor(
     private readonly healthService: HealthService,
-    @Inject('INFLUXDB_SERVICE') private influxService: InfluxService,
+    @Inject('DUCKDB_SERVICE') private duckdbService: DuckDBService,
   ) {}
 
   @Get()
@@ -29,7 +29,7 @@ export class HealthController {
       console.log('[DEBUG] InfluxDB Config:', { bucket, org, url });
       
       // Test basic query
-      const testData = await this.influxService.queryHistoricalData(
+      const testData = await this.duckdbService.queryHistoricalData(
         'esp32_controller_001',
         'water_levels',
         new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),

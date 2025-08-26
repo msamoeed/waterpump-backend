@@ -3,7 +3,7 @@ import { DatabaseModule } from '../../database/database.module';
 import { WebSocketModule } from '../websocket/websocket.module';
 import { DevicesController } from './devices.controller';
 import { DevicesService } from './devices.service';
-import { InfluxService } from '../../database/services/influx.service';
+import { DuckDBService } from '../../database/services/duckdb.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 
@@ -13,8 +13,8 @@ import { PostgresService } from '../../database/services/postgres.service';
   providers: [
     DevicesService,
     {
-      provide: 'INFLUXDB_SERVICE',
-      useExisting: InfluxService,
+      provide: 'DUCKDB_SERVICE',
+      useExisting: DuckDBService,
     },
     {
       provide: 'REDIS_SERVICE',

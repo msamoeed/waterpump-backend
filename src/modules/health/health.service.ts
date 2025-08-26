@@ -1,12 +1,12 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { InfluxService } from '../../database/services/influx.service';
+import { DuckDBService } from '../../database/services/duckdb.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 
 @Injectable()
 export class HealthService {
   constructor(
-    @Inject('INFLUXDB_SERVICE') private influxService: InfluxService,
+    @Inject('DUCKDB_SERVICE') private duckdbService: DuckDBService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
     @Inject('POSTGRES_SERVICE') private postgresService: PostgresService,
   ) {}
@@ -36,7 +36,7 @@ export class HealthService {
       databases: {
         postgres: { status: 'unknown', error: null },
         redis: { status: 'unknown', error: null },
-        influxdb: { status: 'unknown', error: null },
+        duckdb: { status: 'unknown', error: null },
       },
     };
 
@@ -61,14 +61,14 @@ export class HealthService {
       health.databases.redis.error = error.message;
     }
 
-    // Check InfluxDB
+    // Check DuckDB
     try {
       // Try to get latest data as a health check
-      await this.influxService.getLatestDeviceData('test');
-      health.databases.influxdb.status = 'ok';
+      await this.duckdbService.getLatestDeviceData('test');
+      health.databases.duckdb.status = 'ok';
     } catch (error) {
-      health.databases.influxdb.status = 'error';
-      health.databases.influxdb.error = error.message;
+      health.databases.duckdb.status = 'error';
+      health.databases.duckdb.error = error.message;
     }
 
     // Overall status
