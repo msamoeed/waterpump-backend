@@ -173,31 +173,6 @@ export class DevicesController {
       
       console.log(`[DEBUG] TimeSeries Query: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}`);
       
-      // Validate time range before querying
-      const validation = this.devicesService.influxService.validateTimeRange(startTime, endTime, 'custom');
-      if (!validation.valid) {
-        console.log(`[DEBUG] Time range validation failed: ${validation.message}`);
-        
-        // If validation fails, suggest a better range
-        if (validation.suggestedRange) {
-          console.log(`[DEBUG] Using suggested time range: ${validation.suggestedRange.start} to ${validation.suggestedRange.end}`);
-          
-          const timeSeriesData = await this.devicesService.getTimeSeriesData(
-            deviceId,
-            validation.suggestedRange.start,
-            validation.suggestedRange.end,
-            aggregateWindow || '1h'
-          );
-          
-          return {
-            ...timeSeriesData,
-            warning: `Original time range (${hoursCount} hours) was too large. Query executed with suggested range.`,
-            originalRequest: { hours: hoursCount, startTime, endTime },
-            suggestedRange: validation.suggestedRange
-          };
-        }
-      }
-      
       const timeSeriesData = await this.devicesService.getTimeSeriesData(
         deviceId,
         startTime,
@@ -210,20 +185,6 @@ export class DevicesController {
       return timeSeriesData;
     } catch (error) {
       console.error('[DEBUG] TimeSeries Error:', error);
-      
-      // Check if it's a file limit error and provide helpful guidance
-      if (error.message && error.message.includes('file limit')) {
-        const hoursCount = parseInt(hours || '24');
-        const suggestion = hoursCount > 6 ? 
-          `Try reducing the time range to 6 hours or less (e.g., ?hours=6)` :
-          `Try reducing the time range further or use aggregation (e.g., ?hours=1&aggregateWindow=1h)`;
-        
-        throw new HttpException(
-          `Query exceeded file limit. ${suggestion}`, 
-          HttpStatus.BAD_REQUEST
-        );
-      }
-      
       if (error instanceof HttpException) {
         throw error;
       }
@@ -969,131 +930,6 @@ export class DevicesController {
       }
     } catch (error) {
       throw new HttpException('Failed to record device log', HttpStatus.INTERNAL_SERVER_ERROR);
-    }
-  }
-
-  @Get('debug/file-limits')
-  async getFileLimitsInfo() {
-    try {
-      console.log('[DEBUG] Getting file limits information...');
-      
-      const limits = this.devicesService.influxService.getRecommendedTimeLimits();
-      
-      // Test current configuration
-      const currentConfig = {
-        maxFileLimit: process.env.INFLUXDB_MAX_FILE_LIMIT || '1000 (default)',
-        chunkSizeHours: process.env.INFLUXDB_CHUNK_SIZE_HOURS || '6 (default)',
-        environment: process.env.NODE_ENV || 'development'
-      };
-      
-      // Test a small query to see current performance
-      const testStartTime = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(); // 2 hours ago
-      const testEndTime = new Date().toISOString();
-      
-      let testResult = null;
-      try {
-        testResult = await this.devicesService.getDeviceHistory(
-          'test_device_001',
-          'water_levels',
-          testStartTime,
-          testEndTime
-        );
-      } catch (error) {
-        testResult = { error: error.message };
-      }
-      
-      return {
-        currentConfiguration: currentConfig,
-        recommendedTimeLimits: limits,
-        testQuery: {
-          timeRange: '2 hours',
-          startTime: testStartTime,
-          endTime: testEndTime,
-          result: testResult
-        },
-        suggestions: {
-          'For real-time monitoring': 'Use 1-hour or less time ranges',
-          'For daily analysis': 'Use 6-hour or less time ranges',
-          'For weekly analysis': 'Use 24-hour or less time ranges',
-          'For monthly analysis': 'Use 72-hour or less time ranges',
-          'If hitting file limits': 'Reduce time range or use aggregation'
-        },
-        environmentVariables: {
-          'INFLUXDB_MAX_FILE_LIMIT': 'Maximum number of parquet files per query (default: 1000)',
-          'INFLUXDB_CHUNK_SIZE_HOURS': 'Default chunk size for large queries (default: 6)',
-          'NODE_ENV': 'Environment mode'
-        }
-      };
-    } catch (error) {
-      console.error('[DEBUG] File Limits Info Error:', error);
-      return {
-        error: error.message,
-        stack: error.stack
-      };
-    }
-  }
-
-  @Get('debug/validate-time-range')
-  async validateTimeRange(
-    @Query('startTime') startTime: string,
-    @Query('endTime') endTime: string,
-    @Query('queryType') queryType: string = 'custom'
-  ) {
-    try {
-      if (!startTime || !endTime) {
-        throw new HttpException('startTime and endTime are required', HttpStatus.BAD_REQUEST);
-      }
-      
-      const validation = this.devicesService.influxService.validateTimeRange(startTime, endTime, queryType);
-      
-      return {
-        startTime,
-        endTime,
-        queryType,
-        validation,
-        currentTime: new Date().toISOString()
-      };
-    } catch (error) {
-      if (error instanceof HttpException) {
-        throw error;
-      }
-      throw new HttpException(
-        'Failed to validate time range', 
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-  }
-
-  @Get(':deviceId/debug/performance-test')
-  async getPerformanceTest(
-    @Param('deviceId') deviceId: string,
-    @Query('measurement') measurement: string = 'water_levels',
-    @Query('maxHours') maxHours?: string
-  ) {
-    try {
-      const maxHoursCount = parseInt(maxHours || '24');
-      
-      console.log(`[DEBUG] Performance test for deviceId: ${deviceId}, measurement: ${measurement}, maxHours: ${maxHoursCount}`);
-      
-      const performanceResults = await this.devicesService.influxService.testTimeRangePerformance(
-        deviceId,
-        measurement,
-        maxHoursCount
-      );
-      
-      return {
-        deviceId,
-        measurement,
-        maxHours: maxHoursCount,
-        currentTime: new Date().toISOString(),
-        results: performanceResults
-      };
-    } catch (error) {
-      console.error('[DEBUG] Performance Test Error:', error);
-      return {
-        error: error.message,
-        stack: error.stack
-      };
     }
   }
 } 
