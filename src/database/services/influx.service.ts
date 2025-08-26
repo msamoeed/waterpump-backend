@@ -1,11 +1,22 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InfluxDBClient, Point } from '@influxdata/influxdb3-client';
 import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto';
 
 @Injectable()
-export class InfluxService {
+export class InfluxService implements OnApplicationShutdown {
   private influx3Client: InfluxDBClient;
+  private connectionPool: Map<string, InfluxDBClient> = new Map();
+  private readonly maxConnections = 5;
+  private readonly connectionTimeout = 30000; // 30 seconds
+  private queryCounter = 0;
+  private lastCleanup = Date.now();
+  private readonly cleanupInterval = 300000; // 5 minutes
+  
+  // Query caching to reduce high-frequency DB hits
+  private queryCache: Map<string, { data: any[], timestamp: number, ttl: number }> = new Map();
+  private readonly defaultCacheTTL = 15000; // 15 seconds cache for frequent queries
+  private readonly latestDataCacheTTL = 5000; // 5 seconds cache for latest data queries
 
   constructor(private configService: ConfigService) {
     try {
@@ -15,10 +26,11 @@ export class InfluxService {
       const token = this.configService.get('INFLUXDB_TOKEN') || 'dummy-token-for-no-auth-mode';
       const database = this.configService.get('INFLUXDB_BUCKET') || 'waterpump';
 
-      console.log(`[DEBUG] InfluxDB 3.3 Configuration:`, {
+      console.log(`[DEBUG] InfluxDB 3.3 Configuration with Connection Pooling:`, {
         host,
         database,
-        token: token ? '***' : 'not set (no-auth mode)'
+        token: token ? '***' : 'not set (no-auth mode)',
+        maxConnections: this.maxConnections
       });
 
       this.influx3Client = new InfluxDBClient({
@@ -27,11 +39,105 @@ export class InfluxService {
         database,
       });
 
-      console.log(`[DEBUG] InfluxDB client created successfully`);
+      // Initialize connection pool
+      this.initializeConnectionPool(host, token, database);
+
+      console.log(`[DEBUG] InfluxDB client and connection pool created successfully`);
     } catch (error) {
       console.error('[ERROR] Failed to initialize InfluxDB client:', error);
       throw new Error(`InfluxDB initialization failed: ${error.message}`);
     }
+  }
+
+  private initializeConnectionPool(host: string, token: string, database: string): void {
+    // Pre-create connections in the pool
+    for (let i = 0; i < this.maxConnections; i++) {
+      const client = new InfluxDBClient({
+        host,
+        token,
+        database,
+      });
+      this.connectionPool.set(`connection_${i}`, client);
+    }
+  }
+
+  private getPooledConnection(): InfluxDBClient {
+    // Clean up old connections periodically
+    if (Date.now() - this.lastCleanup > this.cleanupInterval) {
+      this.cleanupConnections();
+    }
+
+    // Use round-robin selection for load balancing
+    const connectionKey = `connection_${this.queryCounter % this.maxConnections}`;
+    this.queryCounter++;
+    
+    return this.connectionPool.get(connectionKey) || this.influx3Client;
+  }
+
+  private cleanupConnections(): void {
+    // Clean up expired cache entries
+    const now = Date.now();
+    for (const [key, entry] of this.queryCache.entries()) {
+      if (now - entry.timestamp > entry.ttl) {
+        this.queryCache.delete(key);
+      }
+    }
+    
+    // Force garbage collection hint for connection cleanup
+    if (global.gc) {
+      global.gc();
+    }
+    this.lastCleanup = Date.now();
+    console.log(`[DEBUG] Connection pool cleanup completed. Active queries: ${this.queryCounter}, Cache entries: ${this.queryCache.size}`);
+  }
+
+  private getCacheKey(method: string, ...params: any[]): string {
+    return `${method}:${JSON.stringify(params)}`;
+  }
+
+  private getCachedQuery(cacheKey: string): any[] | null {
+    const entry = this.queryCache.get(cacheKey);
+    if (entry && (Date.now() - entry.timestamp) < entry.ttl) {
+      console.log(`[DEBUG] Cache hit for key: ${cacheKey.substring(0, 50)}...`);
+      return entry.data;
+    }
+    return null;
+  }
+
+  private setCachedQuery(cacheKey: string, data: any[], ttl: number): void {
+    // Limit cache size to prevent memory issues
+    if (this.queryCache.size > 100) {
+      // Remove oldest entries
+      const oldestKey = this.queryCache.keys().next().value;
+      this.queryCache.delete(oldestKey);
+    }
+    
+    this.queryCache.set(cacheKey, {
+      data: [...data], // Create a copy to prevent reference issues
+      timestamp: Date.now(),
+      ttl
+    });
+  }
+
+  async onApplicationShutdown(): Promise<void> {
+    console.log('[DEBUG] Shutting down InfluxDB connections...');
+    
+    // Clear query cache
+    this.queryCache.clear();
+    
+    // Close all pooled connections
+    for (const [key, client] of this.connectionPool.entries()) {
+      try {
+        // Note: InfluxDB client doesn't have explicit close method, 
+        // but we can clear references to help GC
+        this.connectionPool.delete(key);
+      } catch (error) {
+        console.error(`[ERROR] Error closing connection ${key}:`, error);
+      }
+    }
+    
+    this.connectionPool.clear();
+    console.log('[DEBUG] InfluxDB connections and cache cleared');
   }
 
   async writeWaterLevels(statusUpdate: DeviceStatusUpdateDto, timestamp: Date): Promise<void> {
@@ -124,7 +230,7 @@ export class InfluxService {
                         aggregateWindow === '1m' ? 'minute' : 
                         aggregateWindow === '1s' ? 'second' : 'hour';
         
-        // Use window function for aggregation
+        // Use window function for aggregation with LIMIT for memory control
         sqlQuery = `
           SELECT 
             DATE_TRUNC('${timeUnit}', time) as time,
@@ -143,6 +249,7 @@ export class InfluxService {
             AND time <= '${endTime}'
           GROUP BY DATE_TRUNC('${timeUnit}', time), device_id, tank_id
           ORDER BY time
+          LIMIT 1000
         `;
       } else {
         sqlQuery = `
@@ -162,6 +269,7 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT 500
         `;
       }
     } else if (measurement === 'pump_metrics') {
@@ -188,6 +296,7 @@ export class InfluxService {
             AND time <= '${endTime}'
           GROUP BY DATE_TRUNC('${timeUnit}', time), device_id
           ORDER BY time
+          LIMIT 1000
         `;
       } else {
         sqlQuery = `
@@ -205,30 +314,60 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT 500
         `;
       }
     } else {
-      // For other measurements, use simple query
+      // For other measurements, use simple query with limit
       sqlQuery = `
         SELECT * FROM ${measurement} 
         WHERE device_id = '${deviceId}' 
           AND time >= '${startTime}' 
           AND time <= '${endTime}'
         ORDER BY time
+        LIMIT 500
       `;
     }
 
-    console.log(`[DEBUG] InfluxDB SQL Query: ${sqlQuery}`);
+    console.log(`[DEBUG] InfluxDB SQL Query (Pool): ${sqlQuery.substring(0, 100)}...`);
 
     try {
-      const result = [];
-      for await (const row of this.influx3Client.query(sqlQuery)) {
-        result.push(row);
-      }
+      // Use pooled connection and optimized result collection
+      const client = this.getPooledConnection();
+      const result = await this.executeQueryWithOptimizedBuffering(client, sqlQuery);
       console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found`);
       return result;
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
+      throw error;
+    }
+  }
+
+  private async executeQueryWithOptimizedBuffering(client: InfluxDBClient, sqlQuery: string): Promise<any[]> {
+    const result: any[] = [];
+    const batchSize = 50; // Process in smaller batches
+    let batchCount = 0;
+    
+    try {
+      for await (const row of client.query(sqlQuery)) {
+        result.push(row);
+        batchCount++;
+        
+        // Yield control periodically to prevent blocking
+        if (batchCount % batchSize === 0) {
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        
+        // Hard limit to prevent memory exhaustion
+        if (result.length >= 2000) {
+          console.warn(`[WARNING] Query result truncated at ${result.length} records to prevent memory issues`);
+          break;
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('Error in optimized query execution:', error);
       throw error;
     }
   }
@@ -244,6 +383,13 @@ export class InfluxService {
   }
 
   async getLatestDeviceData(deviceId: string): Promise<any> {
+    // Check cache first for this high-frequency query
+    const cacheKey = this.getCacheKey('getLatestDeviceData', deviceId);
+    const cachedResult = this.getCachedQuery(cacheKey);
+    if (cachedResult) {
+      return cachedResult;
+    }
+
     const sqlQuery = `
       SELECT 
         time,
@@ -266,6 +412,8 @@ export class InfluxService {
           NULL as running
         FROM water_levels 
         WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+        ORDER BY time DESC
+        LIMIT 2
         UNION ALL
         SELECT 
           time,
@@ -278,16 +426,20 @@ export class InfluxService {
           running
         FROM pump_metrics 
         WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+        ORDER BY time DESC
+        LIMIT 1
       ) combined_data
       ORDER BY time DESC
-      LIMIT 1
+      LIMIT 5
     `;
 
     try {
-      const result = [];
-      for await (const row of this.influx3Client.query(sqlQuery)) {
-        result.push(row);
-      }
+      const client = this.getPooledConnection();
+      const result = await this.executeQueryWithOptimizedBuffering(client, sqlQuery);
+      
+      // Cache the result with shorter TTL for latest data
+      this.setCachedQuery(cacheKey, result, this.latestDataCacheTTL);
+      
       return result;
     } catch (error) {
       console.error('InfluxDB latest data query error:', error);
@@ -310,13 +462,12 @@ export class InfluxService {
         AND time >= '${startTime}' 
         AND time <= '${endTime}'
       ORDER BY time
+      LIMIT 1000
     `;
 
     try {
-      const result = [];
-      for await (const row of this.influx3Client.query(sqlQuery)) {
-        result.push(row);
-      }
+      const client = this.getPooledConnection();
+      const result = await this.executeQueryWithOptimizedBuffering(client, sqlQuery);
       
       // Process the results to calculate durations
       const sessions = [];

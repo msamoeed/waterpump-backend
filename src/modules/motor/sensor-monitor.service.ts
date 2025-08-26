@@ -8,8 +8,9 @@ import { WebSocketGateway } from '../websocket/websocket.gateway';
 @Injectable()
 export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   private sensorCheckInterval: NodeJS.Timeout;
-  private readonly SENSOR_CHECK_INTERVAL = 10000; // 10 seconds
-  private readonly SENSOR_OFFLINE_THRESHOLD = 30000; // 30 seconds
+  private readonly SENSOR_CHECK_INTERVAL = 30000; // Increased to 30 seconds to reduce DB load
+  private readonly SENSOR_OFFLINE_THRESHOLD = 60000; // Increased to 60 seconds
+  private lastSensorStatus: Map<string, any> = new Map(); // Cache to avoid redundant processing
 
   constructor(
     private readonly motorService: MotorService,
@@ -25,7 +26,7 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   onModuleInit() {
-    // Start monitoring sensors every 10 seconds
+    // Start monitoring sensors every 30 seconds (reduced frequency)
     this.sensorCheckInterval = setInterval(async () => {
       try {
         await this.checkSensorStatusAndControlPump();
@@ -34,13 +35,16 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       }
     }, this.SENSOR_CHECK_INTERVAL);
 
-    console.log('Sensor monitoring service started');
+    console.log(`Sensor monitoring service started with ${this.SENSOR_CHECK_INTERVAL/1000}s interval`);
   }
 
   onModuleDestroy() {
     if (this.sensorCheckInterval) {
       clearInterval(this.sensorCheckInterval);
     }
+    // Clear sensor status cache
+    this.lastSensorStatus.clear();
+    console.log('Sensor monitoring service stopped and cache cleared');
   }
 
   /**
@@ -86,6 +90,23 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       const groundSensorWorking = deviceStatus.ground_tank?.sensor_working || false;
       const roofSensorWorking = deviceStatus.roof_tank?.sensor_working || false;
 
+      // Create current sensor status hash for comparison
+      const currentSensorHash = `${groundSensorConnected}-${roofSensorConnected}-${groundSensorWorking}-${roofSensorWorking}`;
+      const lastSensorHash = this.lastSensorStatus.get(deviceId);
+
+      // Skip processing if sensor status hasn't changed (unless it's been too long)
+      const lastCheck = this.lastSensorStatus.get(`${deviceId}_timestamp`) || 0;
+      const timeSinceLastCheck = Date.now() - lastCheck;
+      
+      if (lastSensorHash === currentSensorHash && timeSinceLastCheck < this.SENSOR_CHECK_INTERVAL * 2) {
+        // Only skip if status is unchanged and it hasn't been too long
+        return;
+      }
+
+      // Update cache
+      this.lastSensorStatus.set(deviceId, currentSensorHash);
+      this.lastSensorStatus.set(`${deviceId}_timestamp`, Date.now());
+
       // Get current motor state
       const motorState = await this.motorService.getMotorState(deviceId);
       
@@ -96,15 +117,17 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
       const isPumpRunning = motorState.motorRunning;
       const isPausedBySensor = motorState.lastCommandReason?.includes('Sensor offline');
 
-      // Emit sensor status update via WebSocket
-      this.emitSensorStatusUpdate(deviceId, {
-        groundSensorConnected,
-        roofSensorConnected,
-        groundSensorWorking,
-        roofSensorWorking,
-        pumpRunning: isPumpRunning,
-        isPausedBySensor
-      });
+      // Only emit status updates if there's a change or it's been a while
+      if (lastSensorHash !== currentSensorHash || timeSinceLastCheck > this.SENSOR_CHECK_INTERVAL * 3) {
+        this.emitSensorStatusUpdate(deviceId, {
+          groundSensorConnected,
+          roofSensorConnected,
+          groundSensorWorking,
+          roofSensorWorking,
+          pumpRunning: isPumpRunning,
+          isPausedBySensor
+        });
+      }
 
       if (shouldPausePump && isPumpRunning && !isPausedBySensor) {
         // Pause the pump due to sensor issues
@@ -124,15 +147,20 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
         });
       }
 
-      // Log sensor status for monitoring
-      await this.logSensorStatus(deviceId, {
-        groundSensorConnected,
-        roofSensorConnected,
-        groundSensorWorking,
-        roofSensorWorking,
-        pumpRunning: isPumpRunning,
-        isPausedBySensor
-      });
+      // Only log sensor status if there's a change or critical status
+      const hasIssues = !groundSensorConnected || !roofSensorConnected || 
+                       !groundSensorWorking || !roofSensorWorking;
+      
+      if (lastSensorHash !== currentSensorHash || hasIssues || isPausedBySensor) {
+        await this.logSensorStatus(deviceId, {
+          groundSensorConnected,
+          roofSensorConnected,
+          groundSensorWorking,
+          roofSensorWorking,
+          pumpRunning: isPumpRunning,
+          isPausedBySensor
+        });
+      }
 
     } catch (error) {
       console.error(`Error processing device ${deviceId} sensors:`, error);
