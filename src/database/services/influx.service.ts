@@ -6,8 +6,14 @@ import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto
 @Injectable()
 export class InfluxService {
   private influx3Client: InfluxDBClient;
+  private readonly MAX_FILE_LIMIT = process.env.INFLUXDB_MAX_FILE_LIMIT ? parseInt(process.env.INFLUXDB_MAX_FILE_LIMIT) : 1000;
+  private readonly DEFAULT_CHUNK_SIZE_HOURS = process.env.INFLUXDB_CHUNK_SIZE_HOURS ? parseInt(process.env.INFLUXDB_CHUNK_SIZE_HOURS) : 6;
 
   constructor(private configService: ConfigService) {
+    this.initializeClient();
+  }
+
+  private async initializeClient() {
     try {
       // Initialize InfluxDB 3.3 Core client
       // For InfluxDB 3.3 Core, we need to use the correct configuration
@@ -108,6 +114,119 @@ export class InfluxService {
   }
 
   async queryHistoricalData(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow?: string
+  ): Promise<any[]> {
+    // Parse time strings to Date objects
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const timeRangeMs = end.getTime() - start.getTime();
+    
+    // If time range is larger than 6 hours, chunk it into smaller segments
+    const MAX_TIME_RANGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+    
+    if (timeRangeMs > MAX_TIME_RANGE_MS) {
+      console.log(`[DEBUG] Large time range detected (${timeRangeMs / (60 * 60 * 1000)} hours), chunking into smaller segments`);
+      return this.queryHistoricalDataChunked(deviceId, measurement, startTime, endTime, aggregateWindow);
+    }
+    
+    return this.executeHistoricalDataQuery(deviceId, measurement, startTime, endTime, aggregateWindow);
+  }
+
+  private async queryHistoricalDataChunked(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow?: string
+  ): Promise<any[]> {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const chunkSizeMs = this.DEFAULT_CHUNK_SIZE_HOURS * 60 * 60 * 1000; // Use configured chunk size
+    
+    const results: any[] = [];
+    let currentStart = start;
+    
+    console.log(`[DEBUG] Chunking query into ${this.DEFAULT_CHUNK_SIZE_HOURS}-hour segments`);
+    
+    while (currentStart < end) {
+      const currentEnd = new Date(Math.min(currentStart.getTime() + chunkSizeMs, end.getTime()));
+      
+      console.log(`[DEBUG] Querying chunk: ${currentStart.toISOString()} to ${currentEnd.toISOString()}`);
+      
+      try {
+        const chunkResult = await this.executeHistoricalDataQuery(
+          deviceId,
+          measurement,
+          currentStart.toISOString(),
+          currentEnd.toISOString(),
+          aggregateWindow
+        );
+        
+        results.push(...chunkResult);
+        console.log(`[DEBUG] Chunk result: ${chunkResult.length} records`);
+        
+      } catch (error) {
+        if (this.isFileLimitError(error)) {
+          // If still hitting file limit, reduce chunk size further
+          console.log(`[DEBUG] File limit hit, reducing chunk size for this segment`);
+          const smallerChunkSizeMs = chunkSizeMs / 2; // Half the configured chunk size
+          const smallerEnd = new Date(Math.min(currentStart.getTime() + smallerChunkSizeMs, end.getTime()));
+          
+          try {
+            const smallerChunkResult = await this.executeHistoricalDataQuery(
+              deviceId,
+              measurement,
+              currentStart.toISOString(),
+              smallerEnd.toISOString(),
+              aggregateWindow
+            );
+            
+            results.push(...smallerChunkResult);
+            console.log(`[DEBUG] Smaller chunk result: ${smallerChunkResult.length} records`);
+            currentStart = smallerEnd;
+          } catch (smallerError) {
+            console.error(`[ERROR] Failed to query smaller chunk:`, smallerError);
+            // If even smaller chunks fail, try with 1-hour chunks
+            const oneHourChunkSizeMs = 60 * 60 * 1000; // 1 hour
+            const oneHourEnd = new Date(Math.min(currentStart.getTime() + oneHourChunkSizeMs, end.getTime()));
+            
+            try {
+              const oneHourResult = await this.executeHistoricalDataQuery(
+                deviceId,
+                measurement,
+                currentStart.toISOString(),
+                oneHourEnd.toISOString(),
+                aggregateWindow
+              );
+              
+              results.push(...oneHourResult);
+              console.log(`[DEBUG] One hour chunk result: ${oneHourResult.length} records`);
+              currentStart = oneHourEnd;
+            } catch (oneHourError) {
+              console.error(`[ERROR] Failed to query one hour chunk:`, oneHourError);
+              // Skip this problematic time range and continue
+              currentStart = oneHourEnd;
+            }
+          }
+        } else {
+          console.error(`[ERROR] Failed to query chunk:`, error);
+          // Skip this problematic time range and continue
+          currentStart = currentEnd;
+        }
+      }
+      
+      currentStart = currentEnd;
+    }
+    
+    console.log(`[DEBUG] Total results from chunked query: ${results.length} records`);
+    return results;
+  }
+
+  private async executeHistoricalDataQuery(
     deviceId: string,
     measurement: string,
     startTime: string,
@@ -229,11 +348,163 @@ export class InfluxService {
       return result;
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
+      
+      // Check if it's a file limit error
+      if (this.isFileLimitError(error)) {
+        const timeRange = this.calculateTimeRange(startTime, endTime);
+        const suggestion = this.getFileLimitSuggestion(timeRange);
+        
+        const enhancedError = new Error(
+          `Query exceeded file limit. ${suggestion} Original error: ${error.message}`
+        );
+        enhancedError.name = 'FileLimitError';
+        enhancedError['originalError'] = error;
+        enhancedError['timeRange'] = timeRange;
+        enhancedError['suggestion'] = suggestion;
+        
+        throw enhancedError;
+      }
+      
       throw error;
     }
   }
 
+  private isFileLimitError(error: any): boolean {
+    return error.message && (
+      error.message.includes('file limit') ||
+      error.message.includes('Query would exceed file limit') ||
+      error.message.includes('parquet files')
+    );
+  }
 
+  private calculateTimeRange(startTime: string, endTime: string): number {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    return (end.getTime() - start.getTime()) / (1000 * 60 * 60); // hours
+  }
+
+  private getFileLimitSuggestion(timeRangeHours: number): string {
+    if (timeRangeHours > 24) {
+      return `Time range is ${timeRangeHours.toFixed(1)} hours. Consider reducing to 6 hours or less.`;
+    } else if (timeRangeHours > 6) {
+      return `Time range is ${timeRangeHours.toFixed(1)} hours. Consider reducing to 6 hours or less.`;
+    } else {
+      return `Time range is ${timeRangeHours.toFixed(1)} hours. This should work, but if issues persist, try reducing further.`;
+    }
+  }
+
+  /**
+   * Get recommended time range limits for different query types
+   */
+  getRecommendedTimeLimits(): { [key: string]: number } {
+    return {
+      'real-time': 1, // 1 hour for real-time data
+      'daily': 6,     // 6 hours for daily analysis
+      'weekly': 24,   // 24 hours for weekly analysis
+      'monthly': 72,  // 72 hours for monthly analysis
+      'custom': this.DEFAULT_CHUNK_SIZE_HOURS
+    };
+  }
+
+  /**
+   * Validate time range before querying
+   */
+  validateTimeRange(startTime: string, endTime: string, queryType: string = 'custom'): { valid: boolean; message?: string; suggestedRange?: { start: string; end: string } } {
+    const limits = this.getRecommendedTimeLimits();
+    const timeRangeHours = this.calculateTimeRange(startTime, endTime);
+    const maxHours = limits[queryType] || limits.custom;
+    
+    if (timeRangeHours > maxHours) {
+      const end = new Date(endTime);
+      const suggestedStart = new Date(end.getTime() - (maxHours * 60 * 60 * 1000));
+      
+      return {
+        valid: false,
+        message: `Time range ${timeRangeHours.toFixed(1)} hours exceeds recommended limit of ${maxHours} hours for ${queryType} queries.`,
+        suggestedRange: {
+          start: suggestedStart.toISOString(),
+          end: endTime
+        }
+      };
+    }
+    
+    return { valid: true };
+  }
+
+  /**
+   * Test different time ranges to find optimal configuration
+   */
+  async testTimeRangePerformance(
+    deviceId: string,
+    measurement: string,
+    maxHours: number = 24
+  ): Promise<{ [key: string]: any }> {
+    const results: { [key: string]: any } = {};
+    const endTime = new Date().toISOString();
+    
+    // Test different time ranges
+    const testRanges = [1, 2, 4, 6, 12, 24].filter(h => h <= maxHours);
+    
+    for (const hours of testRanges) {
+      const startTime = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+      
+      try {
+        console.log(`[DEBUG] Testing ${hours}-hour range...`);
+        const start = Date.now();
+        
+        const data = await this.executeHistoricalDataQuery(
+          deviceId,
+          measurement,
+          startTime,
+          endTime
+        );
+        
+        const duration = Date.now() - start;
+        
+        results[`${hours}h`] = {
+          success: true,
+          startTime,
+          endTime,
+          recordCount: data.length,
+          durationMs: duration,
+          performance: duration < 1000 ? 'excellent' : 
+                     duration < 3000 ? 'good' : 
+                     duration < 10000 ? 'acceptable' : 'slow'
+        };
+        
+      } catch (error) {
+        results[`${hours}h`] = {
+          success: false,
+          startTime,
+          endTime,
+          error: error.message,
+          isFileLimitError: this.isFileLimitError(error)
+        };
+      }
+    }
+    
+    // Find the optimal range
+    const successfulRanges = Object.entries(results)
+      .filter(([_, result]) => result.success)
+      .sort(([_, a], [__, b]) => a.durationMs - b.durationMs);
+    
+    if (successfulRanges.length > 0) {
+      const [optimalRange, optimalResult] = successfulRanges[0];
+      results.recommendation = {
+        optimalRange,
+        reason: `Fastest successful query: ${optimalResult.durationMs}ms`,
+        maxSafeRange: successfulRanges[successfulRanges.length - 1][0]
+      };
+    } else {
+      results.recommendation = {
+        optimalRange: '1h',
+        reason: 'No successful queries. Start with 1-hour ranges.',
+        maxSafeRange: '1h'
+      };
+    }
+    
+    return results;
+  }
 
   // Public method to access the SQL client for testing
   getSQLClient() {
