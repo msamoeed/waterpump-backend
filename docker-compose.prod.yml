@@ -41,31 +41,8 @@ services:
         reservations:
           memory: 256M
 
-  # InfluxDB 3.3 Core Time Series Database
-  influxdb:
-    image: influxdb:3.3-core
-    container_name: waterpump-influxdb-prod
-    command: >
-      influxdb3
-      serve
-      --node-id=node0
-      --object-store=file
-      --data-dir=/var/lib/influxdb3/data
-      --plugin-dir=/var/lib/influxdb3/plugins
-      --without-auth
-    ports:
-      - "${INFLUXDB_PORT:-8087}:8181"
-    volumes:
-      - influxdb_data:/var/lib/influxdb3
-    networks:
-      - waterpump-network
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          memory: 2G
-        reservations:
-          memory: 1G
+  # DuckDB Data Volume (Local SQL Database)
+  # Note: DuckDB runs embedded in the API container, no separate service needed
 
   # Nest.js Backend API
   api:
@@ -87,16 +64,14 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-waterpump}
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      INFLUXDB_URL: http://influxdb:8181
-      INFLUXDB_TOKEN: dummy-token-for-no-auth-mode
-      INFLUXDB_ORG: 
-      INFLUXDB_BUCKET: waterpump
+      DUCKDB_PATH: /app/data/waterpump_data.duckdb
     ports:
       - "${API_PORT:-3002}:3000"
     depends_on:
       - postgres
       - redis
-      - influxdb
+    volumes:
+      - duckdb_data:/app/data
     networks:
       - waterpump-network
     restart: unless-stopped
@@ -110,7 +85,7 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  influxdb_data:
+  duckdb_data:
 
 networks:
   waterpump-network:
