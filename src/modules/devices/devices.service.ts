@@ -420,7 +420,7 @@ export class DevicesService {
   }
 
   private formatDuckDBData(deviceId: string, duckdbData: any[]): any {
-    // Convert InfluxDB data format to our standard format
+    // Convert DuckDB data format to our standard format
     const formatted = {
       device_id: deviceId,
       timestamp: Date.now(),
@@ -473,34 +473,25 @@ export class DevicesService {
       },
     };
 
-    // Process InfluxDB data points
+    // Process DuckDB data points (flat structure)
     for (const point of duckdbData) {
-      if (point._measurement === 'water_levels') {
+      if (point.tank_id) {
+        // Water level data
         const tank = point.tank_id === 'ground' ? 'ground_tank' : 'roof_tank';
-        if (point._field === 'level_percent') formatted[tank].level_percent = point._value;
-        if (point._field === 'level_inches') formatted[tank].level_inches = point._value;
-        if (point._field === 'connected') formatted[tank].connected = point._value;
-        if (point._field === 'sensor_working') formatted[tank].sensor_working = point._value;
-        if (point._field === 'water_supply_on') formatted[tank].water_supply_on = point._value;
-      } else if (point._measurement === 'pump_metrics') {
-        const pump = point.pump_id === 'ground' ? 'ground_pump' : 'roof_pump';
-        if (point._field === 'current_amps') formatted[pump].current_amps = point._value;
-        if (point._field === 'power_watts') formatted[pump].power_watts = point._value;
-        // Only set running status for ground pump from InfluxDB
-        // Roof pump running status will be set from motor state in getCurrentStatus
-        if (point._field === 'running' && pump === 'ground_pump') {
-          formatted[pump].running = point._value;
-        }
-        if (point._field === 'protection_active') formatted[pump].protection_active = point._value;
-        if (point._field === 'manual_override') formatted[pump].manual_override = point._value;
-        if (point._field === 'overcurrent_protection') formatted[pump].overcurrent_protection = point._value;
-        if (point._field === 'overtime_protection') formatted[pump].overtime_protection = point._value;
-        if (point._field === 'runtime_minutes') formatted[pump].runtime_minutes = point._value;
-        if (point._field === 'total_runtime_hours') formatted[pump].total_runtime_hours = point._value;
-      } else if (point._measurement === 'system_status') {
-        if (point._field === 'water_supply_active') formatted.system.water_supply_active = point._value;
-        if (point._field === 'auto_mode_enabled') formatted.system.auto_mode_enabled = point._value;
-        if (point._field === 'manual_pump_control') formatted.system.manual_pump_control = point._value;
+        if (point.level_percent !== undefined) formatted[tank].level_percent = point.level_percent;
+        if (point.level_inches !== undefined) formatted[tank].level_inches = point.level_inches;
+        if (point.alarm_active !== undefined) formatted[tank].alarm_active = point.alarm_active;
+        if (point.connected !== undefined) formatted[tank].connected = point.connected;
+        if (point.sensor_working !== undefined) formatted[tank].sensor_working = point.sensor_working;
+        if (point.water_supply_on !== undefined) formatted[tank].water_supply_on = point.water_supply_on;
+      } else {
+        // Pump metrics data (no tank_id field)
+        if (point.current_amps !== undefined) formatted.ground_pump.current_amps = point.current_amps;
+        if (point.power_watts !== undefined) formatted.ground_pump.power_watts = point.power_watts;
+        if (point.running !== undefined) formatted.ground_pump.running = point.running;
+        if (point.protection_active !== undefined) formatted.ground_pump.protection_active = point.protection_active;
+        if (point.runtime_minutes !== undefined) formatted.ground_pump.runtime_minutes = point.runtime_minutes;
+        if (point.total_runtime_hours !== undefined) formatted.ground_pump.total_runtime_hours = point.total_runtime_hours;
       }
     }
 
@@ -687,26 +678,22 @@ export class DevicesService {
     const latestData = await this.duckdbService.getLatestDeviceData(deviceId);
     
     const groundTankStatus = latestData.find(record => 
-      record._measurement === 'water_levels' && 
-      record.tank_id === 'ground' && 
-      record._field === 'water_supply_on'
+      record.tank_id === 'ground'
     );
     
     const roofTankStatus = latestData.find(record => 
-      record._measurement === 'water_levels' && 
-      record.tank_id === 'roof' && 
-      record._field === 'water_supply_on'
+      record.tank_id === 'roof'
     );
     
     return {
       device_id: deviceId,
       ground_tank: {
-        water_supply_on: groundTankStatus?._value || false,
-        last_update: groundTankStatus?._time || null
+        water_supply_on: groundTankStatus?.water_supply_on || false,
+        last_update: groundTankStatus?.time || null
       },
       roof_tank: {
-        water_supply_on: roofTankStatus?._value || false,
-        last_update: roofTankStatus?._time || null
+        water_supply_on: roofTankStatus?.water_supply_on || false,
+        last_update: roofTankStatus?.time || null
       }
     };
   }
