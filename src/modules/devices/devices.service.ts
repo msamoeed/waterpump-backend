@@ -1,5 +1,5 @@
 import { Injectable, Inject, forwardRef } from '@nestjs/common';
-import { InfluxService } from '../../database/services/influx.service';
+import { DuckDBService } from '../../database/services/duckdb.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
 import { WebSocketGateway } from '../websocket/websocket.gateway';
@@ -9,7 +9,7 @@ import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interface
 @Injectable()
 export class DevicesService {
   constructor(
-    @Inject('INFLUXDB_SERVICE') public influxService: InfluxService,
+    @Inject('DUCKDB_SERVICE') public duckdbService: DuckDBService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
     @Inject('POSTGRES_SERVICE') private postgresService: PostgresService,
     @Inject(forwardRef(() => WebSocketGateway)) private websocketGateway: WebSocketGateway,
@@ -39,10 +39,10 @@ export class DevicesService {
       console.log(`Device already exists: ${statusUpdate.device_id}`);
     }
 
-    // Store in InfluxDB (parallel execution)
-    const influxPromises = [
-      this.influxService.writeWaterLevels(statusUpdate, timestamp),
-      this.influxService.writePumpMetrics(statusUpdate, timestamp),
+    // Store in DuckDB (parallel execution)
+    const duckdbPromises = [
+      this.duckdbService.writeWaterLevels(statusUpdate, timestamp),
+      this.duckdbService.writePumpMetrics(statusUpdate, timestamp),
     ];
 
     // Store in Redis for real-time access
@@ -53,7 +53,7 @@ export class DevicesService {
     );
 
     // Execute all database operations in parallel
-    await Promise.all([...influxPromises, redisPromise]);
+    await Promise.all([...duckdbPromises, redisPromise]);
 
     // Emit real-time update via WebSocket
     this.websocketGateway.emitDeviceUpdate(statusUpdate.device_id, {
@@ -72,8 +72,8 @@ export class DevicesService {
     // Extract device_id from the event or use a default
     const deviceId = pumpEvent.device_id || 'esp32_controller_001';
 
-    // Store pump event in InfluxDB
-    await this.influxService.writeSystemEvent(
+    // Store pump event in DuckDB
+    await this.duckdbService.writeSystemEvent(
       deviceId,
       'pump_event',
       pumpEvent.trigger_reason || 'Unknown reason',
@@ -169,12 +169,12 @@ export class DevicesService {
       // Transform old format with single 'pump' field to new dual pump format
       statusData = this.transformToNewFormat(statusData);
     } else {
-      // Fallback to InfluxDB for recent data
-      const influxData = await this.influxService.getLatestDeviceData(deviceId);
+      // Fallback to DuckDB for recent data
+      const duckdbData = await this.duckdbService.getLatestDeviceData(deviceId);
       
-      if (influxData && influxData.length > 0) {
-        statusData = this.formatInfluxData(deviceId, influxData);
-      }
+              if (duckdbData && duckdbData.length > 0) {
+          statusData = this.formatDuckDBData(deviceId, duckdbData);
+        }
     }
 
     // Always update roof pump status based on current motor state
@@ -223,7 +223,7 @@ export class DevicesService {
     endTime: string,
     aggregateWindow?: string
   ): Promise<any[]> {
-    return await this.influxService.queryHistoricalData(
+    return await this.duckdbService.queryHistoricalData(
       deviceId,
       measurement,
       startTime,
@@ -258,7 +258,7 @@ export class DevicesService {
       console.log(`[DEBUG] getTimeSeriesData called with: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}, aggregateWindow=${aggregateWindow}`);
       
       // Get water levels data
-      const waterLevelsData = await this.influxService.queryHistoricalData(
+      const waterLevelsData = await this.duckdbService.queryHistoricalData(
         deviceId,
         'water_levels',
         startTime,
@@ -272,7 +272,7 @@ export class DevicesService {
       }
 
       // Get pump metrics data
-      const pumpMetricsData = await this.influxService.queryHistoricalData(
+      const pumpMetricsData = await this.duckdbService.queryHistoricalData(
         deviceId,
         'pump_metrics',
         startTime,
@@ -419,7 +419,7 @@ export class DevicesService {
     }
   }
 
-  private formatInfluxData(deviceId: string, influxData: any[]): any {
+  private formatDuckDBData(deviceId: string, duckdbData: any[]): any {
     // Convert InfluxDB data format to our standard format
     const formatted = {
       device_id: deviceId,
@@ -474,7 +474,7 @@ export class DevicesService {
     };
 
     // Process InfluxDB data points
-    for (const point of influxData) {
+    for (const point of duckdbData) {
       if (point._measurement === 'water_levels') {
         const tank = point.tank_id === 'ground' ? 'ground_tank' : 'roof_tank';
         if (point._field === 'level_percent') formatted[tank].level_percent = point._value;
@@ -664,14 +664,14 @@ export class DevicesService {
 
   // Water supply duration methods using existing time series data
   async getWaterSupplySessions(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
-    return await this.influxService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
+    return await this.duckdbService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
   }
 
   async getWaterSupplyStats(deviceId: string, tankId: string, days: number = 30): Promise<any> {
     const endTime = new Date().toISOString();
     const startTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     
-    const result = await this.influxService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
+    const result = await this.duckdbService.getWaterSupplyDuration(deviceId, tankId, startTime, endTime);
     
     return {
       device_id: deviceId,
@@ -684,7 +684,7 @@ export class DevicesService {
 
   async getCurrentWaterSupplyStatus(deviceId: string): Promise<any> {
     // Get the latest water supply status for both tanks
-    const latestData = await this.influxService.getLatestDeviceData(deviceId);
+    const latestData = await this.duckdbService.getLatestDeviceData(deviceId);
     
     const groundTankStatus = latestData.find(record => 
       record._measurement === 'water_levels' && 
