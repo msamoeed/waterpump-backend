@@ -83,10 +83,25 @@ export class InfluxService implements OnApplicationShutdown {
       }
     }
     
+    // Clear query counter to prevent overflow
+    if (this.queryCounter > 1000000) {
+      this.queryCounter = 0;
+      console.log(`[DEBUG] Query counter reset to prevent overflow`);
+    }
+    
     // Force garbage collection hint for connection cleanup
     if (global.gc) {
       global.gc();
     }
+    
+    // Clear any lingering references
+    this.connectionPool.forEach((client, key) => {
+      // Ensure no memory leaks from client references
+      if (!client) {
+        this.connectionPool.delete(key);
+      }
+    });
+    
     this.lastCleanup = Date.now();
     console.log(`[DEBUG] Connection pool cleanup completed. Active queries: ${this.queryCounter}, Cache entries: ${this.queryCache.size}`);
   }
@@ -355,7 +370,7 @@ export class InfluxService implements OnApplicationShutdown {
         
         // Yield control periodically to prevent blocking
         if (batchCount % batchSize === 0) {
-          await new Promise(resolve => setImmediate(resolve));
+          await new Promise(resolve => process.nextTick(resolve));
         }
         
         // Hard limit to prevent memory exhaustion

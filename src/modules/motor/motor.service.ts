@@ -99,7 +99,8 @@ export class MotorService {
     await this.redisService.setMotorState(deviceId, updatedState, 7200); // 2 hours TTL
 
     // SECONDARY: Async backup to PostgreSQL (for history/recovery)
-    setImmediate(async () => {
+    // Use process.nextTick instead of setImmediate to prevent memory leaks
+    process.nextTick(async () => {
       try {
         await this.motorStateRepository.save(updatedState);
         console.log(`Motor state backed up to PostgreSQL for device: ${deviceId}`);

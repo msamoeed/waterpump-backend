@@ -1,8 +1,8 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { MotorService } from './motor.service';
 
 @Injectable()
-export class MotorTasksService implements OnModuleInit {
+export class MotorTasksService implements OnModuleInit, OnModuleDestroy {
   private offlineCheckInterval: NodeJS.Timeout;
   private statusLogInterval: NodeJS.Timeout;
 

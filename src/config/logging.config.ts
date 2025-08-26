@@ -32,6 +32,13 @@ export class MemoryOptimizedLogger implements LoggerService {
     this.flushTimer = setInterval(() => {
       this.flushBuffer();
     }, this.flushInterval);
+    
+    // Force garbage collection hint after flush to prevent memory buildup
+    if (global.gc) {
+      setInterval(() => {
+        global.gc();
+      }, 30000); // Every 30 seconds
+    }
   }
 
   private addToBuffer(message: string) {
