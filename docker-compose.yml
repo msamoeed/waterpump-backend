@@ -39,6 +39,9 @@ services:
       --data-dir=/var/lib/influxdb3/data
       --plugin-dir=/var/lib/influxdb3/plugins
       --without-auth
+      --query-file-limit=1000
+      --query-memory-bytes=1073741824
+      --query-concurrency-limit=4
     ports:
       - "${INFLUXDB_PORT:-8087}:8181"
     volumes:
@@ -46,6 +49,12 @@ services:
     networks:
       - waterpump-network
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
 
   # Nest.js Backend API
   api:
@@ -61,7 +70,7 @@ services:
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_PASSWORD: ${POSTGRES_USER:-password}
       ONESIGNAL_REST_API_KEY: ${ONESIGNAL_REST_API_KEY:-}
       POSTGRES_DB: ${POSTGRES_DB:-waterpump}
       REDIS_HOST: redis

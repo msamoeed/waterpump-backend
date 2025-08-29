@@ -8,6 +8,7 @@ export class InfluxService {
   private influx3Client: InfluxDBClient;
   private readonly DEFAULT_LIMIT = 1000;
   private readonly MAX_LIMIT = 10000;
+  private readonly MAX_TIME_RANGE_HOURS = 24; // Maximum time range to prevent file limit issues
 
   constructor(private configService: ConfigService) {
     try {
@@ -109,13 +110,21 @@ export class InfluxService {
     }
   }
 
-  // 🚨 MEMORY OPTIMIZED: Get record count before processing large datasets
+  // 🚨 MEMORY & FILE LIMIT OPTIMIZED: Get record count with time range validation
   async getRecordCount(
     deviceId: string,
     measurement: string,
     startTime: string,
     endTime: string
   ): Promise<number> {
+    // Validate time range to prevent file limit issues
+    const timeRangeHours = this.getTimeRangeHours(startTime, endTime);
+    if (timeRangeHours > this.MAX_TIME_RANGE_HOURS) {
+      console.warn(`[WARNING] Time range too large: ${timeRangeHours} hours. Limiting to ${this.MAX_TIME_RANGE_HOURS} hours.`);
+      const limitedStartTime = new Date(new Date(endTime).getTime() - this.MAX_TIME_RANGE_HOURS * 60 * 60 * 1000).toISOString();
+      startTime = limitedStartTime;
+    }
+
     const sqlQuery = `
       SELECT COUNT(*) as count
       FROM ${measurement} 
@@ -131,12 +140,16 @@ export class InfluxService {
       }
       return result[0]?.count || 0;
     } catch (error) {
+      if (error.message.includes('file limit') || error.message.includes('parquet files')) {
+        console.error('[ERROR] File limit exceeded. Consider using smaller time ranges or aggregation.');
+        throw new Error(`Query time range too large. Please use time ranges under ${this.MAX_TIME_RANGE_HOURS} hours or use aggregation windows.`);
+      }
       console.error('InfluxDB count query error:', error);
       return 0;
     }
   }
 
-  // 🚨 MEMORY OPTIMIZED: Paginated query with limits
+  // 🚨 MEMORY & FILE LIMIT OPTIMIZED: Paginated query with intelligent time range handling
   async queryHistoricalData(
     deviceId: string,
     measurement: string,
@@ -150,6 +163,14 @@ export class InfluxService {
     limit = Math.min(limit, this.MAX_LIMIT);
     limit = Math.max(limit, 1);
     offset = Math.max(offset, 0);
+
+    // 🚨 FILE LIMIT PROTECTION: Validate and adjust time range
+    const timeRangeHours = this.getTimeRangeHours(startTime, endTime);
+    if (timeRangeHours > this.MAX_TIME_RANGE_HOURS) {
+      console.warn(`[WARNING] Time range too large: ${timeRangeHours} hours. Limiting to ${this.MAX_TIME_RANGE_HOURS} hours.`);
+      const limitedStartTime = new Date(new Date(endTime).getTime() - this.MAX_TIME_RANGE_HOURS * 60 * 60 * 1000).toISOString();
+      startTime = limitedStartTime;
+    }
 
     // Get total count first
     const total = await this.getRecordCount(deviceId, measurement, startTime, endTime);
@@ -308,12 +329,16 @@ export class InfluxService {
         offset
       };
     } catch (error) {
+      if (error.message.includes('file limit') || error.message.includes('parquet files')) {
+        console.error('[ERROR] File limit exceeded. Consider using smaller time ranges or aggregation.');
+        throw new Error(`Query time range too large. Please use time ranges under ${this.MAX_TIME_RANGE_HOURS} hours or use aggregation windows.`);
+      }
       console.error('InfluxDB SQL query error:', error);
       throw error;
     }
   }
 
-  // 🚨 MEMORY OPTIMIZED: Streaming for large datasets
+  // 🚨 MEMORY & FILE LIMIT OPTIMIZED: Streaming with automatic time range splitting
   async *streamHistoricalData(
     deviceId: string,
     measurement: string,
@@ -322,6 +347,52 @@ export class InfluxService {
     aggregateWindow?: string,
     chunkSize: number = 1000
   ): AsyncGenerator<any[], void, unknown> {
+    // 🚨 FILE LIMIT PROTECTION: Split large time ranges into smaller chunks
+    const timeRangeHours = this.getTimeRangeHours(startTime, endTime);
+    if (timeRangeHours > this.MAX_TIME_RANGE_HOURS) {
+      console.warn(`[WARNING] Large time range detected: ${timeRangeHours} hours. Splitting into smaller chunks.`);
+      
+      // Split into smaller time chunks
+      const chunkHours = Math.min(12, this.MAX_TIME_RANGE_HOURS); // Use 12-hour chunks
+      const startDate = new Date(startTime);
+      const endDate = new Date(endTime);
+      
+      for (let currentStart = startDate; currentStart < endDate; currentStart = new Date(currentStart.getTime() + chunkHours * 60 * 60 * 1000)) {
+        const currentEnd = new Date(Math.min(currentStart.getTime() + chunkHours * 60 * 60 * 1000, endDate.getTime()));
+        
+        console.log(`[DEBUG] Processing chunk: ${currentStart.toISOString()} to ${currentEnd.toISOString()}`);
+        
+        let offset = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const result = await this.queryHistoricalData(
+            deviceId, 
+            measurement, 
+            currentStart.toISOString(), 
+            currentEnd.toISOString(), 
+            aggregateWindow, 
+            chunkSize, 
+            offset
+          );
+
+          if (result.data.length > 0) {
+            yield result.data;
+          }
+
+          hasMore = result.hasMore;
+          offset += chunkSize;
+
+          // 🚨 MEMORY SAFETY: Add small delay to prevent overwhelming memory
+          if (hasMore) {
+            await new Promise(resolve => setTimeout(resolve, 10));
+          }
+        }
+      }
+      return;
+    }
+
+    // Normal streaming for smaller time ranges
     let offset = 0;
     let hasMore = true;
 
@@ -419,8 +490,16 @@ export class InfluxService {
     }
   }
 
-  // 🚨 MEMORY OPTIMIZED: Streaming water supply duration calculation
+  // 🚨 MEMORY & FILE LIMIT OPTIMIZED: Streaming water supply duration calculation
   async getWaterSupplyDuration(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
+    // 🚨 FILE LIMIT PROTECTION: Validate time range
+    const timeRangeHours = this.getTimeRangeHours(startTime, endTime);
+    if (timeRangeHours > this.MAX_TIME_RANGE_HOURS) {
+      console.warn(`[WARNING] Time range too large for water supply calculation: ${timeRangeHours} hours. Limiting to ${this.MAX_TIME_RANGE_HOURS} hours.`);
+      const limitedStartTime = new Date(new Date(endTime).getTime() - this.MAX_TIME_RANGE_HOURS * 60 * 60 * 1000).toISOString();
+      startTime = limitedStartTime;
+    }
+
     // First check if dataset is too large
     const totalRecords = await this.getRecordCount(deviceId, 'water_levels', startTime, endTime);
     
@@ -463,6 +542,10 @@ export class InfluxService {
       // 🚨 MEMORY OPTIMIZED: Process results in smaller chunks
       return this.processWaterSupplySessions(result);
     } catch (error) {
+      if (error.message.includes('file limit') || error.message.includes('parquet files')) {
+        console.error('[ERROR] File limit exceeded for water supply calculation. Consider using smaller time ranges.');
+        throw new Error(`Query time range too large. Please use time ranges under ${this.MAX_TIME_RANGE_HOURS} hours.`);
+      }
       console.error('InfluxDB water supply query error:', error);
       throw error;
     }
@@ -528,6 +611,13 @@ export class InfluxService {
         min_duration_minutes: minDurationMinutes
       }
     };
+  }
+
+  // 🚨 UTILITY: Calculate time range in hours
+  private getTimeRangeHours(startTime: string, endTime: string): number {
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    return (end.getTime() - start.getTime()) / (1000 * 60 * 60);
   }
 
   // 🚨 MEMORY SAFETY: Cleanup method

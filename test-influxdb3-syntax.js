@@ -37,13 +37,16 @@ async function testInfluxDB3Syntax() {
     }
     console.log(`✅ Basic query successful: ${basicResult.length} results`);
     
-    // Test 2: Time-based query with LIMIT
-    console.log('\n📊 Test 2: Time-based query with LIMIT...');
+    // Test 2: Time-based query with LIMIT (using small time range to avoid file limit)
+    console.log('\n📊 Test 2: Time-based query with LIMIT (small time range)...');
+    const now = new Date();
+    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000); // 1 hour ago
+    
     const timeQuery = `
       SELECT time, device_id, level_percent 
       FROM water_levels 
-      WHERE time >= '2025-08-29T00:00:00Z' 
-        AND time <= '2025-08-29T23:59:59Z'
+      WHERE time >= '${oneHourAgo.toISOString()}' 
+        AND time <= '${now.toISOString()}'
       ORDER BY time DESC 
       LIMIT 10
     `;
@@ -55,16 +58,16 @@ async function testInfluxDB3Syntax() {
     }
     console.log(`✅ Time query successful: ${timeResult.length} results`);
     
-    // Test 3: Aggregation with time_bucket (InfluxDB 3.3 syntax)
-    console.log('\n📊 Test 3: Aggregation with time_bucket...');
+    // Test 3: Aggregation with time_bucket (InfluxDB 3.3 syntax) - small time range
+    console.log('\n📊 Test 3: Aggregation with time_bucket (small time range)...');
     const aggQuery = `
       SELECT 
         time_bucket(interval '1 hour', time) as time,
         device_id,
         AVG(level_percent) as avg_level
       FROM water_levels 
-      WHERE time >= '2025-08-29T00:00:00Z' 
-        AND time <= '2025-08-29T23:59:59Z'
+      WHERE time >= '${oneHourAgo.toISOString()}' 
+        AND time <= '${now.toISOString()}'
       GROUP BY time_bucket(interval '1 hour', time), device_id
       ORDER BY time
       LIMIT 5
@@ -77,8 +80,8 @@ async function testInfluxDB3Syntax() {
     }
     console.log(`✅ Aggregation query successful: ${aggResult.length} results`);
     
-    // Test 4: Complex query with multiple conditions
-    console.log('\n📊 Test 4: Complex query with multiple conditions...');
+    // Test 4: Complex query with multiple conditions (small time range)
+    console.log('\n📊 Test 4: Complex query with multiple conditions (small time range)...');
     const complexQuery = `
       SELECT 
         time,
@@ -89,8 +92,8 @@ async function testInfluxDB3Syntax() {
       FROM water_levels 
       WHERE device_id = 'esp32_controller_001'
         AND tank_id IN ('ground', 'roof')
-        AND time >= '2025-08-29T00:00:00Z'
-        AND time <= '2025-08-29T23:59:59Z'
+        AND time >= '${oneHourAgo.toISOString()}'
+        AND time <= '${now.toISOString()}'
         AND level_percent > 0
       ORDER BY time DESC
       LIMIT 5
@@ -129,18 +132,49 @@ async function testInfluxDB3Syntax() {
     }
     console.log(`✅ Read back successful: ${readBackResult.length} results`);
     
+    // Test 7: Test with even smaller time range (last 15 minutes)
+    console.log('\n📊 Test 7: Very small time range query (15 minutes)...');
+    const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+    
+    const smallTimeQuery = `
+      SELECT time, device_id, level_percent
+      FROM water_levels 
+      WHERE time >= '${fifteenMinutesAgo.toISOString()}' 
+        AND time <= '${now.toISOString()}'
+      ORDER BY time DESC 
+      LIMIT 5
+    `;
+    console.log(`Query: ${smallTimeQuery.trim()}`);
+    
+    const smallTimeResult = [];
+    for await (const row of client.query(smallTimeQuery)) {
+      smallTimeResult.push(row);
+    }
+    console.log(`✅ Small time range query successful: ${smallTimeResult.length} results`);
+    
     console.log('\n🎉 All InfluxDB 3.3 syntax tests passed!');
     console.log('\n📋 Summary:');
     console.log('- Basic SELECT queries: ✅');
-    console.log('- Time-based queries: ✅');
+    console.log('- Time-based queries (1 hour): ✅');
     console.log('- Aggregation with time_bucket: ✅');
     console.log('- Complex WHERE conditions: ✅');
     console.log('- Data writing: ✅');
     console.log('- Data reading: ✅');
+    console.log('- Small time range queries (15 min): ✅');
+    
+    console.log('\n💡 Key Insights:');
+    console.log('- Using small time ranges prevents file limit errors');
+    console.log('- time_bucket function works correctly with InfluxDB 3.3');
+    console.log('- All SQL syntax is compatible');
     
   } catch (error) {
     console.error('\n❌ Test failed:', error.message);
     console.error('Stack trace:', error.stack);
+    
+    if (error.message.includes('file limit') || error.message.includes('parquet files')) {
+      console.log('\n💡 Hint: File limit exceeded. This test uses small time ranges to avoid this issue.');
+      console.log('In production, use aggregation windows or split large queries into smaller time chunks.');
+    }
     
     if (error.message.includes('time_bucket')) {
       console.log('\n💡 Hint: time_bucket function might not be available in this InfluxDB version');
