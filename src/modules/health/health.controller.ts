@@ -53,4 +53,20 @@ export class HealthController {
       };
     }
   }
+
+  @Get('performance')
+  async getPerformanceMetrics() {
+    return await this.healthService.getPerformanceMetrics();
+  }
+
+  @Get('system')
+  async getSystemResources() {
+    return await this.healthService.getSystemResources();
+  }
+
+  @Get('cache')
+  async getCacheStatus() {
+    // This will be implemented in the health service to show cache statistics
+    return await this.healthService.getCacheStatus();
+  }
 } 

@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleDestroy } from '@nestjs/common';
 import { InfluxService } from '../../database/services/influx.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
@@ -7,13 +7,43 @@ import { DeviceStatusUpdateDto, PumpCommandDto } from '../../common/dto/device-s
 import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interfaces/websocket-events.interface';
 
 @Injectable()
-export class DevicesService {
+export class DevicesService implements OnModuleDestroy {
+  // Add caching for frequently accessed data
+  private deviceStatusCache = new Map<string, { data: any; timestamp: number }>();
+  private readonly CACHE_TTL = parseInt(process.env.DEVICE_CACHE_TTL || '30000'); // 30 seconds cache TTL, configurable
+  private cacheCleanupInterval: NodeJS.Timeout;
+
   constructor(
     @Inject('INFLUXDB_SERVICE') public influxService: InfluxService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
     @Inject('POSTGRES_SERVICE') private postgresService: PostgresService,
     @Inject(forwardRef(() => WebSocketGateway)) private websocketGateway: WebSocketGateway,
-  ) {}
+  ) {
+    // Start cache cleanup every 5 minutes
+    this.cacheCleanupInterval = setInterval(() => {
+      this.cleanupExpiredCache();
+    }, 300000); // 5 minutes
+  }
+
+  /**
+   * Clean up expired cache entries to prevent memory leaks
+   */
+  private cleanupExpiredCache(): void {
+    const now = Date.now();
+    const expiredKeys: string[] = [];
+    
+    for (const [key, value] of this.deviceStatusCache.entries()) {
+      if (now - value.timestamp > this.CACHE_TTL) {
+        expiredKeys.push(key);
+      }
+    }
+    
+    expiredKeys.forEach(key => this.deviceStatusCache.delete(key));
+    
+    if (expiredKeys.length > 0) {
+      console.log(`[CACHE] Cleaned up ${expiredKeys.length} expired cache entries`);
+    }
+  }
 
   async updateDeviceStatus(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
     const timestamp = new Date();
@@ -160,6 +190,12 @@ export class DevicesService {
   }
 
   async getCurrentStatus(deviceId: string): Promise<any> {
+    // Check cache first to reduce database calls
+    const cached = this.deviceStatusCache.get(deviceId);
+    if (cached && Date.now() - cached.timestamp < this.CACHE_TTL) {
+      return cached.data;
+    }
+
     // Try to get from Redis cache first
     const cachedStatus = await this.redisService.getDeviceStatus(deviceId);
     
@@ -198,20 +234,35 @@ export class DevicesService {
       }
     }
 
+    // Cache the result to reduce future database calls
+    if (statusData) {
+      this.deviceStatusCache.set(deviceId, { data: statusData, timestamp: Date.now() });
+    }
+
     return statusData;
   }
 
   async getAllDevicesStatus(): Promise<Record<string, any>> {
     const keys = await this.redisService.getDeviceKeys();
-    const devices: Record<string, any> = {};
-
-    for (const key of keys) {
-      const deviceId = key.split(':')[1];
-      const statusData = await this.redisService.get(key);
+    const deviceIds = keys.map(key => key.split(':')[1]);
+    
+    // Use batch Redis operations instead of individual calls
+    const statusPromises = deviceIds.map(async (deviceId) => {
+      const statusData = await this.redisService.get(`device_status:${deviceId}`);
       if (statusData) {
-        devices[deviceId] = JSON.parse(statusData);
+        return { deviceId, status: JSON.parse(statusData) };
       }
-    }
+      return null;
+    });
+    
+    const results = await Promise.all(statusPromises);
+    
+    const devices: Record<string, any> = {};
+    results.forEach(result => {
+      if (result) {
+        devices[result.deviceId] = result.status;
+      }
+    });
 
     return devices;
   }
@@ -811,6 +862,13 @@ export class DevicesService {
         message: `[${level}] ${log.message}`,
         severity: level === 'error' ? 'critical' : level === 'warn' ? 'high' : 'low',
       });
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.cacheCleanupInterval) {
+      clearInterval(this.cacheCleanupInterval);
+      console.log('[CACHE] Cache cleanup interval stopped.');
     }
   }
 } 

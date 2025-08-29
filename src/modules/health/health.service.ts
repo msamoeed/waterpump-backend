@@ -77,4 +77,68 @@ export class HealthService {
 
     return health;
   }
+
+  async getHealth(): Promise<any> {
+    const health = {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      environment: process.env.NODE_ENV || 'development',
+    };
+
+    return health;
+  }
+
+  // Add performance monitoring
+  async getPerformanceMetrics() {
+    const memUsage = process.memoryUsage();
+    const cpuUsage = process.cpuUsage();
+    
+    return {
+      memory: {
+        rss: Math.round(memUsage.rss / 1024 / 1024) + ' MB',
+        heapUsed: Math.round(memUsage.heapUsed / 1024 / 1024) + ' MB',
+        heapTotal: Math.round(memUsage.heapTotal / 1024 / 1024) + ' MB',
+        external: Math.round(memUsage.external / 1024 / 1024) + ' MB',
+      },
+      cpu: {
+        user: Math.round(cpuUsage.user / 1000) + ' ms',
+        system: Math.round(cpuUsage.system / 1000) + ' ms',
+      },
+      uptime: Math.round(process.uptime()) + ' seconds',
+      platform: process.platform,
+      nodeVersion: process.version,
+    };
+  }
+
+  // Add system resource monitoring
+  async getSystemResources() {
+    try {
+      const os = require('os');
+      return {
+        totalMemory: Math.round(os.totalmem() / 1024 / 1024) + ' MB',
+        freeMemory: Math.round(os.freemem() / 1024 / 1024) + ' MB',
+        cpuCount: os.cpus().length,
+        loadAverage: os.loadavg(),
+        uptime: Math.round(os.uptime()) + ' seconds',
+      };
+    } catch (error) {
+      return { error: 'Unable to get system resources' };
+    }
+  }
+
+  // Add cache status monitoring
+  async getCacheStatus() {
+    try {
+      // Get cache statistics from DevicesService if available
+      // For now, return basic cache info
+      return {
+        status: 'available',
+        timestamp: new Date().toISOString(),
+        note: 'Cache statistics available through DevicesService',
+      };
+    } catch (error) {
+      return { error: 'Unable to get cache status' };
+    }
+  }
 } 

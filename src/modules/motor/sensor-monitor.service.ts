@@ -8,8 +8,12 @@ import { WebSocketGateway } from '../websocket/websocket.gateway';
 @Injectable()
 export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   private sensorCheckInterval: NodeJS.Timeout;
-  private readonly SENSOR_CHECK_INTERVAL = 10000; // 10 seconds
-  private readonly SENSOR_OFFLINE_THRESHOLD = 30000; // 30 seconds
+  // Make intervals configurable through environment variables
+  private readonly SENSOR_CHECK_INTERVAL = parseInt(process.env.SENSOR_CHECK_INTERVAL || '60000'); // 1 minute default
+  private readonly SENSOR_OFFLINE_THRESHOLD = parseInt(process.env.SENSOR_OFFLINE_THRESHOLD || '30000'); // 30 seconds
+  
+  // Add debouncing for WebSocket emissions
+  private emissionDebounce = new Map<string, NodeJS.Timeout>();
 
   constructor(
     private readonly motorService: MotorService,
@@ -432,9 +436,51 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Emit sensor status update via WebSocket
+   * Emit sensor status update via WebSocket with debouncing
    */
   private emitSensorStatusUpdate(deviceId: string, status: {
+    groundSensorConnected: boolean;
+    roofSensorConnected: boolean;
+    groundSensorWorking: boolean;
+    roofSensorWorking: boolean;
+    pumpRunning: boolean;
+    isPausedBySensor: boolean;
+  }): void {
+    // Use debounced emission to reduce WebSocket traffic
+    this.emitDebouncedSensorStatusUpdate(deviceId, status);
+  }
+
+  /**
+   * Debounced sensor status update emission to reduce WebSocket traffic
+   */
+  private emitDebouncedSensorStatusUpdate(deviceId: string, status: {
+    groundSensorConnected: boolean;
+    roofSensorConnected: boolean;
+    groundSensorWorking: boolean;
+    roofSensorWorking: boolean;
+    pumpRunning: boolean;
+    isPausedBySensor: boolean;
+  }): void {
+    try {
+      // Clear existing timeout
+      if (this.emissionDebounce.has(deviceId)) {
+        clearTimeout(this.emissionDebounce.get(deviceId));
+      }
+      
+      // Debounce emissions to 2 seconds to reduce CPU usage
+      this.emissionDebounce.set(deviceId, setTimeout(() => {
+        this.emitImmediateSensorStatusUpdate(deviceId, status);
+        this.emissionDebounce.delete(deviceId);
+      }, 2000));
+    } catch (error) {
+      console.error(`Error in debounced emission for device ${deviceId}:`, error);
+    }
+  }
+
+  /**
+   * Immediate sensor status update emission (called after debouncing)
+   */
+  private emitImmediateSensorStatusUpdate(deviceId: string, status: {
     groundSensorConnected: boolean;
     roofSensorConnected: boolean;
     groundSensorWorking: boolean;
