@@ -72,19 +72,22 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      // Get current device status
-      const deviceStatus = await this.devicesService.getCurrentStatus(deviceId);
-      if (!deviceStatus) {
+      // Get current sensor status from Redis (fast, lightweight)
+      const sensorStatusKey = `sensor:${deviceId}:status`;
+      const sensorStatusData = await this.redisService.get(sensorStatusKey);
+      
+      if (!sensorStatusData) {
+        console.log(`No sensor status found for device ${deviceId}, skipping`);
         return;
       }
 
-      // Check sensor connectivity
-      const groundSensorConnected = deviceStatus.ground_tank?.connected || false;
-      const roofSensorConnected = deviceStatus.roof_tank?.connected || false;
+      const sensorStatus = JSON.parse(sensorStatusData);
       
-      // Check if sensors are working (not just connected, but actually functioning)
-      const groundSensorWorking = deviceStatus.ground_tank?.sensor_working || false;
-      const roofSensorWorking = deviceStatus.roof_tank?.sensor_working || false;
+      // Check sensor connectivity and functionality from Redis
+      const groundSensorConnected = sensorStatus.ground_tank?.connected || false;
+      const roofSensorConnected = sensorStatus.roof_tank?.connected || false;
+      const groundSensorWorking = sensorStatus.ground_tank?.sensor_working || false;
+      const roofSensorWorking = sensorStatus.roof_tank?.sensor_working || false;
 
       // Get current motor state
       const motorState = await this.motorService.getMotorState(deviceId);
@@ -151,11 +154,14 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     try {
       console.log(`Pausing roof pump for device ${deviceId} due to sensor issues:`, sensorStatus);
 
-      // Get current device status for detailed information
-      const deviceStatus = await this.devicesService.getCurrentStatus(deviceId);
+      // Get current device status from Redis for detailed information
+      const deviceStatusKey = `device:${deviceId}:status`;
+      const deviceStatusData = await this.redisService.get(deviceStatusKey);
+      const deviceStatus = deviceStatusData ? JSON.parse(deviceStatusData) : null;
+      
       const motorState = await this.motorService.getMotorState(deviceId);
 
-      // Determine error types for each sensor
+      // Determine error types for each sensor using Redis data
       const groundSensorError = this.determineSensorError(sensorStatus.groundSensorConnected, sensorStatus.groundSensorWorking, deviceStatus?.ground_tank);
       const roofSensorError = this.determineSensorError(sensorStatus.roofSensorConnected, sensorStatus.roofSensorWorking, deviceStatus?.roof_tank);
 

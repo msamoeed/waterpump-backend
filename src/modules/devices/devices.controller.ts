@@ -471,40 +471,47 @@ export class DevicesController {
   @Get(':deviceId/debug/raw-data')
   async getRawData(
     @Param('deviceId') deviceId: string,
-    @Query('hours') hours?: string
+    @Query('hours') hours?: string,
+    @Query('limit') limit?: string
   ) {
     try {
       const hoursCount = parseInt(hours || '24');
+      const recordLimit = parseInt(limit || '1000'); // Default limit to prevent memory issues
       const endTime = new Date().toISOString();
       const startTime = new Date(Date.now() - hoursCount * 60 * 60 * 1000).toISOString();
       
-      console.log(`[DEBUG] Raw Data Query: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}`);
+      console.log(`[DEBUG] Raw Data Query: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}, limit=${recordLimit}`);
       
-      // Query without aggregation
-      const waterLevelsData = await this.devicesService.influxService.queryHistoricalData(
+      // Use the new raw data method with limits
+      const waterLevelsData = await this.devicesService.influxService.queryRawData(
         deviceId,
         'water_levels',
         startTime,
-        endTime
+        endTime,
+        recordLimit
       );
       
-      const pumpMetricsData = await this.devicesService.influxService.queryHistoricalData(
+      const pumpMetricsData = await this.devicesService.influxService.queryRawData(
         deviceId,
         'pump_metrics',
         startTime,
-        endTime
+        endTime,
+        recordLimit
       );
       
       return {
         deviceId,
         timeRange: { startTime, endTime },
+        queryLimit: recordLimit,
         waterLevels: {
           count: waterLevelsData.length,
-          sampleData: waterLevelsData.slice(0, 3)
+          sampleData: waterLevelsData.slice(0, 3),
+          note: `Limited to ${recordLimit} most recent records`
         },
         pumpMetrics: {
           count: pumpMetricsData.length,
-          sampleData: pumpMetricsData.slice(0, 3)
+          sampleData: pumpMetricsData.slice(0, 3),
+          note: `Limited to ${recordLimit} most recent records`
         }
       };
     } catch (error) {

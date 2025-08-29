@@ -252,12 +252,18 @@ export class DevicesService {
     deviceId: string,
     startTime: string,
     endTime: string,
-    aggregateWindow: string
+    aggregateWindow: string = '1h'  // Default to hourly aggregation for better performance
   ): Promise<any[]> {
     try {
       console.log(`[DEBUG] getTimeSeriesData called with: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}, aggregateWindow=${aggregateWindow}`);
       
-      // Get water levels data
+      // Always use aggregation for better performance and memory usage
+      // If no aggregation specified, default to hourly
+      if (!aggregateWindow) {
+        aggregateWindow = '1h';
+      }
+      
+      // Get water levels data (aggregated)
       const waterLevelsData = await this.influxService.queryHistoricalData(
         deviceId,
         'water_levels',
@@ -266,12 +272,12 @@ export class DevicesService {
         aggregateWindow
       );
 
-      console.log(`[DEBUG] Water levels data returned: ${waterLevelsData.length} records`);
+      console.log(`[DEBUG] Water levels data returned: ${waterLevelsData.length} aggregated records`);
       if (waterLevelsData.length > 0) {
         console.log(`[DEBUG] Sample water level record:`, waterLevelsData[0]);
       }
 
-      // Get pump metrics data
+      // Get pump metrics data (aggregated)
       const pumpMetricsData = await this.influxService.queryHistoricalData(
         deviceId,
         'pump_metrics',
@@ -280,12 +286,12 @@ export class DevicesService {
         aggregateWindow
       );
 
-      console.log(`[DEBUG] Pump metrics data returned: ${pumpMetricsData.length} records`);
+      console.log(`[DEBUG] Pump metrics data returned: ${pumpMetricsData.length} aggregated records`);
       if (pumpMetricsData.length > 0) {
         console.log(`[DEBUG] Sample pump metric record:`, pumpMetricsData[0]);
       }
 
-      // Process and format the data for the frontend
+      // Process and format the aggregated data for the frontend
       const processedData = this.processTimeSeriesData(waterLevelsData, pumpMetricsData);
       
       console.log(`[DEBUG] Processed data returned: ${processedData.length} records`);
@@ -296,6 +302,53 @@ export class DevicesService {
       return processedData;
     } catch (error) {
       console.error('Error getting time series data:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get raw time series data without aggregation (for debugging purposes only)
+   * Use sparingly as this can return large datasets
+   */
+  async getRawTimeSeriesData(
+    deviceId: string,
+    startTime: string,
+    endTime: string,
+    limit: number = 1000
+  ): Promise<any[]> {
+    try {
+      console.log(`[DEBUG] getRawTimeSeriesData called with: deviceId=${deviceId}, startTime=${startTime}, endTime=${endTime}, limit=${limit}`);
+      
+      // Get raw water levels data (limited)
+      const waterLevelsData = await this.influxService.queryRawData(
+        deviceId,
+        'water_levels',
+        startTime,
+        endTime,
+        limit
+      );
+
+      console.log(`[DEBUG] Raw water levels data returned: ${waterLevelsData.length} records (limited)`);
+
+      // Get raw pump metrics data (limited)
+      const pumpMetricsData = await this.influxService.queryRawData(
+        deviceId,
+        'pump_metrics',
+        startTime,
+        endTime,
+        limit
+      );
+
+      console.log(`[DEBUG] Raw pump metrics data returned: ${pumpMetricsData.length} records (limited)`);
+
+      // Process and format the raw data for debugging
+      const processedData = this.processTimeSeriesData(waterLevelsData, pumpMetricsData);
+      
+      console.log(`[DEBUG] Processed raw data returned: ${processedData.length} records`);
+      
+      return processedData;
+    } catch (error) {
+      console.error('Error getting raw time series data:', error);
       throw error;
     }
   }

@@ -114,6 +114,11 @@ export class InfluxService {
     endTime: string,
     aggregateWindow?: string
   ): Promise<any[]> {
+    // Default to hourly aggregation for better performance and memory usage
+    if (!aggregateWindow) {
+      aggregateWindow = '1h';
+    }
+    
     let sqlQuery: string;
     
     if (measurement === 'water_levels') {
@@ -145,22 +150,24 @@ export class InfluxService {
           ORDER BY time
         `;
       } else {
+        // Fallback to aggregated data even if no window specified
         sqlQuery = `
           SELECT 
-            time,
+            DATE_TRUNC('hour', time) as time,
             device_id,
             tank_id,
-            level_percent,
-            level_inches,
-            alarm_active,
-            connected,
-            sensor_working,
-            water_supply_on
+            AVG(level_percent) as level_percent,
+            AVG(level_inches) as level_inches,
+            MAX(CASE WHEN alarm_active THEN 1 ELSE 0 END) as alarm_active,
+            MAX(CASE WHEN connected THEN 1 ELSE 0 END) as connected,
+            MAX(CASE WHEN sensor_working THEN 1 ELSE 0 END) as sensor_working,
+            MAX(CASE WHEN water_supply_on THEN 1 ELSE 0 END) as water_supply_on
           FROM water_levels 
           WHERE device_id = '${deviceId}' 
             AND tank_id IN ('ground', 'roof')
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
+          GROUP BY DATE_TRUNC('hour', time), device_id, tank_id
           ORDER BY time
         `;
       }
@@ -190,42 +197,49 @@ export class InfluxService {
           ORDER BY time
         `;
       } else {
+        // Fallback to aggregated data even if no window specified
         sqlQuery = `
           SELECT 
-            time,
+            DATE_TRUNC('hour', time) as time,
             device_id,
-            current_amps,
-            power_watts,
-            running,
-            protection_active,
-            runtime_minutes,
-            total_runtime_hours
+            AVG(current_amps) as current_amps,
+            AVG(power_watts) as power_watts,
+            MAX(CASE WHEN running THEN 1 ELSE 0 END) as running,
+            MAX(CASE WHEN protection_active THEN 1 ELSE 0 END) as protection_active,
+            AVG(runtime_minutes) as runtime_minutes,
+            AVG(total_runtime_hours) as total_runtime_hours
           FROM pump_metrics 
           WHERE device_id = '${deviceId}' 
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
+          GROUP BY DATE_TRUNC('hour', time), device_id
           ORDER BY time
         `;
       }
     } else {
-      // For other measurements, use simple query
+      // For other measurements, use hourly aggregation by default
       sqlQuery = `
-        SELECT * FROM ${measurement} 
+        SELECT 
+          DATE_TRUNC('hour', time) as time,
+          device_id,
+          AVG(value) as value
+        FROM ${measurement} 
         WHERE device_id = '${deviceId}' 
           AND time >= '${startTime}' 
           AND time <= '${endTime}'
+        GROUP BY DATE_TRUNC('hour', time), device_id
         ORDER BY time
       `;
     }
 
-    console.log(`[DEBUG] InfluxDB SQL Query: ${sqlQuery}`);
+    console.log(`[DEBUG] InfluxDB SQL Query (aggregated): ${sqlQuery}`);
 
     try {
       const result = [];
       for await (const row of this.influx3Client.query(sqlQuery)) {
         result.push(row);
       }
-      console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found`);
+      console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} aggregated records found`);
       return result;
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
@@ -233,7 +247,82 @@ export class InfluxService {
     }
   }
 
+  /**
+   * Get raw data without aggregation (for debugging purposes only)
+   * Use sparingly as this can return large datasets
+   */
+  async queryRawData(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    limit: number = 1000  // Default limit to prevent memory issues
+  ): Promise<any[]> {
+    let sqlQuery: string;
+    
+    if (measurement === 'water_levels') {
+      sqlQuery = `
+        SELECT 
+          time,
+          device_id,
+          tank_id,
+          level_percent,
+          level_inches,
+          alarm_active,
+          connected,
+          sensor_working,
+          water_supply_on
+        FROM water_levels 
+        WHERE device_id = '${deviceId}' 
+          AND tank_id IN ('ground', 'roof')
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+        ORDER BY time DESC
+        LIMIT ${limit}
+      `;
+    } else if (measurement === 'pump_metrics') {
+      sqlQuery = `
+        SELECT 
+          time,
+          device_id,
+          current_amps,
+          power_watts,
+          running,
+          protection_active,
+          runtime_minutes,
+          total_runtime_hours
+        FROM pump_metrics 
+        WHERE device_id = '${deviceId}' 
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+        ORDER BY time DESC
+        LIMIT ${limit}
+      `;
+    } else {
+      sqlQuery = `
+        SELECT * FROM ${measurement} 
+        WHERE device_id = '${deviceId}' 
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+        ORDER BY time DESC
+        LIMIT ${limit}
+      `;
+    }
 
+    console.log(`[DEBUG] InfluxDB Raw Query (limited to ${limit} records): ${sqlQuery}`);
+
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
+      }
+      console.log(`[DEBUG] InfluxDB Raw Result: ${result.length} records found (limited)`);
+      return result;
+    } catch (error) {
+      console.error('InfluxDB raw query error:', error);
+      throw error;
+    }
+  }
 
   // Public method to access the SQL client for testing
   getSQLClient() {
