@@ -112,8 +112,10 @@ export class InfluxService {
     measurement: string,
     startTime: string,
     endTime: string,
-    aggregateWindow?: string
-  ): Promise<any[]> {
+    aggregateWindow?: string,
+    limit: number = 10000,
+    offset: number = 0
+  ): Promise<{ data: any[], total: number, hasMore: boolean }> {
     let sqlQuery: string;
     
     if (measurement === 'water_levels') {
@@ -124,7 +126,7 @@ export class InfluxService {
                         aggregateWindow === '1m' ? 'minute' : 
                         aggregateWindow === '1s' ? 'second' : 'hour';
         
-        // Use window function for aggregation
+        // Use window function for aggregation with pagination
         sqlQuery = `
           SELECT 
             DATE_TRUNC('${timeUnit}', time) as time,
@@ -143,6 +145,7 @@ export class InfluxService {
             AND time <= '${endTime}'
           GROUP BY DATE_TRUNC('${timeUnit}', time), device_id, tank_id
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       } else {
         sqlQuery = `
@@ -162,6 +165,7 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       }
     } else if (measurement === 'pump_metrics') {
@@ -188,6 +192,7 @@ export class InfluxService {
             AND time <= '${endTime}'
           GROUP BY DATE_TRUNC('${timeUnit}', time), device_id
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       } else {
         sqlQuery = `
@@ -205,16 +210,18 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       }
     } else {
-      // For other measurements, use simple query
+      // For other measurements, use simple query with pagination
       sqlQuery = `
         SELECT * FROM ${measurement} 
         WHERE device_id = '${deviceId}' 
           AND time >= '${startTime}' 
           AND time <= '${endTime}'
         ORDER BY time
+        LIMIT ${limit} OFFSET ${offset}
       `;
     }
 
@@ -222,11 +229,28 @@ export class InfluxService {
 
     try {
       const result = [];
+      let count = 0;
+      
+      // Stream results to prevent memory issues
       for await (const row of this.influx3Client.query(sqlQuery)) {
-        result.push(row);
+        if (count < limit) {
+          result.push(row);
+          count++;
+        } else {
+          break; // Stop processing once we reach the limit
+        }
       }
-      console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found`);
-      return result;
+      
+      // Check if there are more results
+      const hasMore = count === limit;
+      
+      console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found, hasMore: ${hasMore}`);
+      
+      return {
+        data: result,
+        total: result.length,
+        hasMore
+      };
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
       throw error;
@@ -241,6 +265,96 @@ export class InfluxService {
       throw new Error('InfluxDB client not initialized');
     }
     return this.influx3Client;
+  }
+
+  /**
+   * Stream large datasets in chunks to prevent memory issues
+   */
+  async *streamHistoricalData(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow?: string,
+    chunkSize: number = 1000
+  ): AsyncGenerator<any[], void, unknown> {
+    let offset = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const result = await this.queryHistoricalData(
+        deviceId,
+        measurement,
+        startTime,
+        endTime,
+        aggregateWindow,
+        chunkSize,
+        offset
+      );
+
+      if (result.data.length > 0) {
+        yield result.data;
+      }
+
+      hasMore = result.hasMore;
+      offset += chunkSize;
+
+      // Add a small delay to prevent overwhelming the system
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+  }
+
+  /**
+   * Get total count of records for a time range without loading data
+   */
+  async getRecordCount(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string
+  ): Promise<number> {
+    let sqlQuery: string;
+
+    if (measurement === 'water_levels') {
+      sqlQuery = `
+        SELECT COUNT(*) as count
+        FROM water_levels 
+        WHERE device_id = '${deviceId}' 
+          AND tank_id IN ('ground', 'roof')
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+      `;
+    } else if (measurement === 'pump_metrics') {
+      sqlQuery = `
+        SELECT COUNT(*) as count
+        FROM pump_metrics 
+        WHERE device_id = '${deviceId}' 
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+      `;
+    } else {
+      sqlQuery = `
+        SELECT COUNT(*) as count
+        FROM ${measurement} 
+        WHERE device_id = '${deviceId}' 
+          AND time >= '${startTime}' 
+          AND time <= '${endTime}'
+      `;
+    }
+
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
+      }
+      
+      return result.length > 0 ? parseInt(result[0].count) : 0;
+    } catch (error) {
+      console.error('InfluxDB count query error:', error);
+      return 0;
+    }
   }
 
   async getLatestDeviceData(deviceId: string): Promise<any> {

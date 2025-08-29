@@ -70,6 +70,7 @@ services:
       INFLUXDB_TOKEN: dummy-token-for-no-auth-mode
       INFLUXDB_ORG: 
       INFLUXDB_BUCKET: waterpump
+      NODE_OPTIONS: "--max-old-space-size=2048 --max-semi-space-size=512"
     ports:
       - "${API_PORT:-3002}:3000"
     depends_on:
@@ -81,6 +82,12 @@ services:
     restart: unless-stopped
     volumes:
       - ./src:/app/src
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+        reservations:
+          memory: 1G
 
 volumes:
   postgres_data:
