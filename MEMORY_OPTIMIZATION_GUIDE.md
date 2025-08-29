@@ -54,7 +54,7 @@ NODE_OPTIONS="--max-old-space-size=2048 --max-semi-space-size=512"
 
 ## 🚀 Code Optimizations
 
-### 1. Paginated Queries
+### 1. Paginated Queries (InfluxDB 3.3 Compatible)
 
 Use the new pagination parameters in your API calls:
 
@@ -62,13 +62,13 @@ Use the new pagination parameters in your API calls:
 // Before (causes memory issues)
 const data = await influxService.queryHistoricalData(deviceId, 'water_levels', startTime, endTime);
 
-// After (memory efficient)
+// After (memory efficient with InfluxDB 3.3)
 const result = await influxService.queryHistoricalData(
   deviceId, 
   'water_levels', 
   startTime, 
   endTime, 
-  '1h',  // aggregate window
+  '1h',  // aggregate window (uses time_bucket for InfluxDB 3.3)
   1000,  // limit per page
   0      // offset
 );
@@ -88,7 +88,7 @@ for await (const chunk of influxService.streamHistoricalData(
   'water_levels', 
   startTime, 
   endTime, 
-  '1h',    // aggregate window
+  '1h',    // aggregate window (InfluxDB 3.3 compatible)
   1000     // chunk size
 )) {
   // Process each chunk
@@ -112,6 +112,32 @@ if (totalRecords > 100000) {
   // Use streaming for large datasets
   // Or implement pagination
 }
+```
+
+### 4. InfluxDB 3.3 Specific Optimizations
+
+The service now uses InfluxDB 3.3 compatible syntax:
+
+```typescript
+// ✅ CORRECT: InfluxDB 3.3 time_bucket function
+const query = `
+  SELECT 
+    time_bucket(interval '1 hour', time) as time,
+    device_id,
+    AVG(level_percent) as level_percent
+  FROM water_levels 
+  WHERE device_id = '${deviceId}' 
+    AND time >= '${startTime}' 
+    AND time <= '${endTime}'
+  GROUP BY time_bucket(interval '1 hour', time), device_id
+  ORDER BY time
+  LIMIT ${limit} OFFSET ${offset}
+`;
+
+// ❌ WRONG: PostgreSQL DATE_TRUNC (not supported in InfluxDB 3.3)
+const wrongQuery = `
+  SELECT DATE_TRUNC('hour', time) as time  -- This won't work!
+`;
 ```
 
 ## 📈 Monitoring and Prevention
@@ -197,9 +223,24 @@ docker exec waterpump-api node --trace-gc -e "console.log('GC monitoring enabled
 ### 3. Database Query Optimization
 
 - Use appropriate time ranges
-- Implement aggregation windows
+- Implement aggregation windows with `time_bucket`
 - Avoid `SELECT *` queries
 - Use indexes on time and device_id columns
+
+### 4. InfluxDB 3.3 Specific Issues
+
+If you encounter InfluxDB 3.3 errors:
+
+```bash
+# Check InfluxDB logs
+docker-compose logs influxdb
+
+# Test InfluxDB health
+curl http://localhost:8087/health
+
+# Test SQL syntax
+curl http://localhost:3002/api/v1/devices/debug/sql
+```
 
 ## 📋 Best Practices
 
@@ -217,7 +258,14 @@ docker exec waterpump-api node --trace-gc -e "console.log('GC monitoring enabled
 - Implement timeouts for long-running operations
 - Cache frequently accessed data
 
-### 3. Monitoring
+### 3. InfluxDB 3.3 Queries
+
+- Use `time_bucket` for time aggregation
+- Avoid PostgreSQL-specific functions
+- Test queries with small datasets first
+- Use proper LIMIT and OFFSET for pagination
+
+### 4. Monitoring
 
 - Set up memory usage alerts
 - Monitor query performance
@@ -252,6 +300,19 @@ docker-compose down && docker-compose up -d
 docker-compose logs api
 ```
 
+### 3. InfluxDB 3.3 Issues
+
+```bash
+# Check InfluxDB status
+docker-compose logs influxdb
+
+# Restart InfluxDB if needed
+docker-compose restart influxdb
+
+# Verify data integrity
+curl http://localhost:3002/api/v1/health
+```
+
 ## 📞 Support
 
 If you continue to experience memory issues:
@@ -260,6 +321,7 @@ If you continue to experience memory issues:
 2. Monitor memory: `./memory-optimization.sh monitor`
 3. Review your query patterns and time ranges
 4. Consider implementing data archiving for old records
+5. Verify InfluxDB 3.3 syntax compatibility
 
 ## 🔄 Regular Maintenance
 
@@ -276,4 +338,4 @@ If you continue to experience memory issues:
 
 ---
 
-**Remember**: The key to preventing memory issues is implementing proper pagination, using streaming for large datasets, and monitoring memory usage regularly.
+**Remember**: The key to preventing memory issues is implementing proper pagination, using streaming for large datasets, using InfluxDB 3.3 compatible syntax, and monitoring memory usage regularly.

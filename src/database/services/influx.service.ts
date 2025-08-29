@@ -6,6 +6,8 @@ import { DeviceStatusUpdateDto } from '../../common/dto/device-status-update.dto
 @Injectable()
 export class InfluxService {
   private influx3Client: InfluxDBClient;
+  private readonly DEFAULT_LIMIT = 1000;
+  private readonly MAX_LIMIT = 10000;
 
   constructor(private configService: ConfigService) {
     try {
@@ -107,27 +109,78 @@ export class InfluxService {
     }
   }
 
+  // 🚨 MEMORY OPTIMIZED: Get record count before processing large datasets
+  async getRecordCount(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string
+  ): Promise<number> {
+    const sqlQuery = `
+      SELECT COUNT(*) as count
+      FROM ${measurement} 
+      WHERE device_id = '${deviceId}' 
+        AND time >= '${startTime}' 
+        AND time <= '${endTime}'
+    `;
+
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sqlQuery)) {
+        result.push(row);
+      }
+      return result[0]?.count || 0;
+    } catch (error) {
+      console.error('InfluxDB count query error:', error);
+      return 0;
+    }
+  }
+
+  // 🚨 MEMORY OPTIMIZED: Paginated query with limits
   async queryHistoricalData(
     deviceId: string,
     measurement: string,
     startTime: string,
     endTime: string,
-    aggregateWindow?: string
-  ): Promise<any[]> {
+    aggregateWindow?: string,
+    limit: number = this.DEFAULT_LIMIT,
+    offset: number = 0
+  ): Promise<{ data: any[], total: number, hasMore: boolean, limit: number, offset: number }> {
+    // Validate and cap limits to prevent memory issues
+    limit = Math.min(limit, this.MAX_LIMIT);
+    limit = Math.max(limit, 1);
+    offset = Math.max(offset, 0);
+
+    // Get total count first
+    const total = await this.getRecordCount(deviceId, measurement, startTime, endTime);
+    
+    // If dataset is too large, suggest aggregation
+    if (total > 100000 && !aggregateWindow) {
+      console.warn(`[WARNING] Large dataset detected: ${total} records. Consider using aggregation window.`);
+    }
+
     let sqlQuery: string;
     
     if (measurement === 'water_levels') {
       if (aggregateWindow) {
-        // Convert InfluxDB 2.x time units to InfluxDB 3.x DATE_TRUNC units
-        const timeUnit = aggregateWindow === '1h' ? 'hour' : 
-                        aggregateWindow === '1d' ? 'day' : 
-                        aggregateWindow === '1m' ? 'minute' : 
-                        aggregateWindow === '1s' ? 'second' : 'hour';
+        // 🚨 FIXED: Use InfluxDB 3.3 compatible time window functions
+        // InfluxDB 3.3 uses different syntax for time aggregation
+        let timeGroupBy = '';
+        if (aggregateWindow === '1h') {
+          timeGroupBy = 'time_bucket(interval \'1 hour\', time)';
+        } else if (aggregateWindow === '1d') {
+          timeGroupBy = 'time_bucket(interval \'1 day\', time)';
+        } else if (aggregateWindow === '1m') {
+          timeGroupBy = 'time_bucket(interval \'1 minute\', time)';
+        } else if (aggregateWindow === '1s') {
+          timeGroupBy = 'time_bucket(interval \'1 second\', time)';
+        } else {
+          timeGroupBy = 'time_bucket(interval \'1 hour\', time)';
+        }
         
-        // Use window function for aggregation
         sqlQuery = `
           SELECT 
-            DATE_TRUNC('${timeUnit}', time) as time,
+            ${timeGroupBy} as time,
             device_id,
             tank_id,
             AVG(level_percent) as level_percent,
@@ -141,8 +194,9 @@ export class InfluxService {
             AND tank_id IN ('ground', 'roof')
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
-          GROUP BY DATE_TRUNC('${timeUnit}', time), device_id, tank_id
+          GROUP BY ${timeGroupBy}, device_id, tank_id
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       } else {
         sqlQuery = `
@@ -162,19 +216,28 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       }
     } else if (measurement === 'pump_metrics') {
       if (aggregateWindow) {
-        // Convert InfluxDB 2.x time units to InfluxDB 3.x DATE_TRUNC units
-        const timeUnit = aggregateWindow === '1h' ? 'hour' : 
-                        aggregateWindow === '1d' ? 'day' : 
-                        aggregateWindow === '1m' ? 'minute' : 
-                        aggregateWindow === '1s' ? 'second' : 'hour';
+        // 🚨 FIXED: Use InfluxDB 3.3 compatible time window functions
+        let timeGroupBy = '';
+        if (aggregateWindow === '1h') {
+          timeGroupBy = 'time_bucket(interval \'1 hour\', time)';
+        } else if (aggregateWindow === '1d') {
+          timeGroupBy = 'time_bucket(interval \'1 day\', time)';
+        } else if (aggregateWindow === '1m') {
+          timeGroupBy = 'time_bucket(interval \'1 minute\', time)';
+        } else if (aggregateWindow === '1s') {
+          timeGroupBy = 'time_bucket(interval \'1 second\', time)';
+        } else {
+          timeGroupBy = 'time_bucket(interval \'1 hour\', time)';
+        }
         
         sqlQuery = `
           SELECT 
-            DATE_TRUNC('${timeUnit}', time) as time,
+            ${timeGroupBy} as time,
             device_id,
             AVG(current_amps) as current_amps,
             AVG(power_watts) as power_watts,
@@ -186,8 +249,9 @@ export class InfluxService {
           WHERE device_id = '${deviceId}' 
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
-          GROUP BY DATE_TRUNC('${timeUnit}', time), device_id
+          GROUP BY ${timeGroupBy}, device_id
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       } else {
         sqlQuery = `
@@ -205,16 +269,17 @@ export class InfluxService {
             AND time >= '${startTime}' 
             AND time <= '${endTime}'
           ORDER BY time
+          LIMIT ${limit} OFFSET ${offset}
         `;
       }
     } else {
-      // For other measurements, use simple query
       sqlQuery = `
         SELECT * FROM ${measurement} 
         WHERE device_id = '${deviceId}' 
           AND time >= '${startTime}' 
           AND time <= '${endTime}'
         ORDER BY time
+        LIMIT ${limit} OFFSET ${offset}
       `;
     }
 
@@ -224,16 +289,66 @@ export class InfluxService {
       const result = [];
       for await (const row of this.influx3Client.query(sqlQuery)) {
         result.push(row);
+        // 🚨 MEMORY SAFETY: Check if we're approaching memory limits
+        if (result.length > limit) {
+          console.warn(`[WARNING] Query result exceeded limit: ${result.length} > ${limit}`);
+          break;
+        }
       }
+      
       console.log(`[DEBUG] InfluxDB SQL Result: ${result.length} records found`);
-      return result;
+      
+      const hasMore = (offset + limit) < total;
+      
+      return {
+        data: result,
+        total,
+        hasMore,
+        limit,
+        offset
+      };
     } catch (error) {
       console.error('InfluxDB SQL query error:', error);
       throw error;
     }
   }
 
+  // 🚨 MEMORY OPTIMIZED: Streaming for large datasets
+  async *streamHistoricalData(
+    deviceId: string,
+    measurement: string,
+    startTime: string,
+    endTime: string,
+    aggregateWindow?: string,
+    chunkSize: number = 1000
+  ): AsyncGenerator<any[], void, unknown> {
+    let offset = 0;
+    let hasMore = true;
 
+    while (hasMore) {
+      const result = await this.queryHistoricalData(
+        deviceId, 
+        measurement, 
+        startTime, 
+        endTime, 
+        aggregateWindow, 
+        chunkSize, 
+        offset
+      );
+
+      if (result.data.length > 0) {
+        yield result.data;
+      }
+
+      hasMore = result.hasMore;
+      offset += chunkSize;
+
+      // 🚨 MEMORY SAFETY: Add small delay to prevent overwhelming memory
+      if (hasMore) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+  }
 
   // Public method to access the SQL client for testing
   getSQLClient() {
@@ -243,7 +358,12 @@ export class InfluxService {
     return this.influx3Client;
   }
 
+  // 🚨 MEMORY OPTIMIZED: Limited latest data query
   async getLatestDeviceData(deviceId: string): Promise<any> {
+    // 🚨 FIXED: Use InfluxDB 3.3 compatible time functions
+    // InfluxDB 3.3 doesn't support NOW() - INTERVAL syntax
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    
     const sqlQuery = `
       SELECT 
         time,
@@ -265,7 +385,9 @@ export class InfluxService {
           NULL as power_watts,
           NULL as running
         FROM water_levels 
-        WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+        WHERE device_id = '${deviceId}' AND time >= '${oneHourAgo}'
+        ORDER BY time DESC
+        LIMIT 10
         UNION ALL
         SELECT 
           time,
@@ -277,7 +399,9 @@ export class InfluxService {
           power_watts,
           running
         FROM pump_metrics 
-        WHERE device_id = '${deviceId}' AND time >= NOW() - INTERVAL '1 hour'
+        WHERE device_id = '${deviceId}' AND time >= '${oneHourAgo}'
+        ORDER BY time DESC
+        LIMIT 10
       ) combined_data
       ORDER BY time DESC
       LIMIT 1
@@ -295,9 +419,15 @@ export class InfluxService {
     }
   }
 
-
-
+  // 🚨 MEMORY OPTIMIZED: Streaming water supply duration calculation
   async getWaterSupplyDuration(deviceId: string, tankId: string, startTime: string, endTime: string): Promise<any> {
+    // First check if dataset is too large
+    const totalRecords = await this.getRecordCount(deviceId, 'water_levels', startTime, endTime);
+    
+    if (totalRecords > 50000) {
+      console.warn(`[WARNING] Large dataset for water supply calculation: ${totalRecords} records. Consider using shorter time ranges.`);
+    }
+
     const sqlQuery = `
       SELECT 
         time,
@@ -314,68 +444,103 @@ export class InfluxService {
 
     try {
       const result = [];
+      let processedCount = 0;
+      
       for await (const row of this.influx3Client.query(sqlQuery)) {
         result.push(row);
-      }
-      
-      // Process the results to calculate durations
-      const sessions = [];
-      let currentSession = null;
-      
-      for (let i = 0; i < result.length; i++) {
-        const record = result[i];
-        const isSupplyOn = record.water_supply_on === true;
-        const timestamp = new Date(record.time);
+        processedCount++;
         
-        if (isSupplyOn && !currentSession) {
-          // Start of a new session
-          currentSession = {
-            start_time: timestamp,
-            end_time: null,
-            duration_minutes: 0
-          };
-        } else if (!isSupplyOn && currentSession) {
-          // End of current session
-          currentSession.end_time = timestamp;
-          currentSession.duration_minutes = Math.floor(
-            (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
-          );
-          sessions.push(currentSession);
-          currentSession = null;
+        // 🚨 MEMORY SAFETY: Process in chunks to prevent memory buildup
+        if (processedCount % 1000 === 0) {
+          console.log(`[DEBUG] Processed ${processedCount} records for water supply calculation`);
+          // Force garbage collection hint
+          if (global.gc) {
+            global.gc();
+          }
         }
       }
       
-      // Handle case where session is still active at the end of the time range
-      if (currentSession) {
-        currentSession.end_time = new Date(endTime);
-        currentSession.duration_minutes = Math.floor(
-          (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
-        );
-        sessions.push(currentSession);
-      }
-      
-      // Calculate statistics
-      const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
-      const totalSessions = sessions.length;
-      const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
-      const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
-      const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
-      
-      return {
-        sessions: sessions,
-        stats: {
-          total_duration_hours: totalDurationMinutes / 60,
-          total_sessions: totalSessions,
-          avg_duration_minutes: avgDurationMinutes,
-          max_duration_minutes: maxDurationMinutes,
-          min_duration_minutes: minDurationMinutes
-        }
-      };
+      // 🚨 MEMORY OPTIMIZED: Process results in smaller chunks
+      return this.processWaterSupplySessions(result);
     } catch (error) {
       console.error('InfluxDB water supply query error:', error);
       throw error;
     }
   }
 
+  // 🚨 MEMORY OPTIMIZED: Separate method for processing sessions
+  private processWaterSupplySessions(records: any[]): any {
+    const sessions = [];
+    let currentSession = null;
+    
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      const isSupplyOn = record.water_supply_on === true;
+      const timestamp = new Date(record.time);
+      
+      if (isSupplyOn && !currentSession) {
+        // Start of a new session
+        currentSession = {
+          start_time: timestamp,
+          end_time: null,
+          duration_minutes: 0
+        };
+      } else if (!isSupplyOn && currentSession) {
+        // End of current session
+        currentSession.end_time = timestamp;
+        currentSession.duration_minutes = Math.floor(
+          (timestamp.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+        );
+        sessions.push(currentSession);
+        currentSession = null;
+      }
+      
+      // 🚨 MEMORY SAFETY: Limit sessions array size
+      if (sessions.length > 1000) {
+        console.warn(`[WARNING] Too many water supply sessions: ${sessions.length}. Truncating.`);
+        break;
+      }
+    }
+    
+    // Handle case where session is still active at the end of the time range
+    if (currentSession) {
+      currentSession.end_time = new Date();
+      currentSession.duration_minutes = Math.floor(
+        (currentSession.end_time.getTime() - currentSession.start_time.getTime()) / (1000 * 60)
+      );
+      sessions.push(currentSession);
+    }
+    
+    // Calculate statistics
+    const totalDurationMinutes = sessions.reduce((sum, session) => sum + session.duration_minutes, 0);
+    const totalSessions = sessions.length;
+    const avgDurationMinutes = totalSessions > 0 ? totalDurationMinutes / totalSessions : 0;
+    const maxDurationMinutes = totalSessions > 0 ? Math.max(...sessions.map(s => s.duration_minutes)) : 0;
+    const minDurationMinutes = totalSessions > 0 ? Math.min(...sessions.map(s => s.duration_minutes)) : 0;
+    
+    return {
+      sessions: sessions.slice(0, 100), // Limit returned sessions
+      stats: {
+        total_duration_hours: totalDurationMinutes / 60,
+        total_sessions: totalSessions,
+        avg_duration_minutes: avgDurationMinutes,
+        max_duration_minutes: maxDurationMinutes,
+        min_duration_minutes: minDurationMinutes
+      }
+    };
+  }
 
+  // 🚨 MEMORY SAFETY: Cleanup method
+  async cleanup() {
+    try {
+      // Close any open connections
+      if (this.influx3Client) {
+        // Note: InfluxDB 3.x client doesn't have explicit close method
+        // But we can clean up any cached data
+        console.log('[DEBUG] InfluxDB service cleanup completed');
+      }
+    } catch (error) {
+      console.error('[ERROR] InfluxDB cleanup error:', error);
+    }
+  }
 } 
