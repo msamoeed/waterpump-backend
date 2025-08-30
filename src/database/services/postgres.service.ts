@@ -31,6 +31,27 @@ export class PostgresService {
     });
   }
 
+  /**
+   * Lightweight device existence check without loading relations
+   * Use this for frequent existence checks to avoid complex JOINs
+   */
+  async deviceExists(deviceId: string): Promise<boolean> {
+    const count = await this.deviceRepository.count({
+      where: { device_id: deviceId }
+    });
+    return count > 0;
+  }
+
+  /**
+   * Get device without relations for basic operations
+   */
+  async getDeviceBasic(deviceId: string): Promise<Device | null> {
+    return await this.deviceRepository.findOne({
+      where: { device_id: deviceId },
+      select: ['id', 'device_id', 'name', 'location'] // Only essential fields
+    });
+  }
+
   async getAllDevices(): Promise<Device[]> {
     return await this.deviceRepository.find({
       relations: ['alert_rules'],
