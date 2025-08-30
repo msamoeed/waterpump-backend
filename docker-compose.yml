@@ -39,10 +39,30 @@ services:
       --data-dir=/var/lib/influxdb3/data
       --plugin-dir=/var/lib/influxdb3/plugins
       --without-auth
+      --max-memory=4GB
+      --max-query-memory=1GB
+      --wal-max-concurrent-reads=4
+      --wal-max-batch-size=1000
+      --wal-sync-interval=1s
+      --wal-checkpoint-interval=5m
+      --wal-max-size=1GB
+      --wal-retention-period=1h
+    environment:
+      INFLUXDB_WAL_MAX_SIZE: 1GB
+      INFLUXDB_WAL_CHECKPOINT_INTERVAL: 5m
+      INFLUXDB_WAL_RETENTION_PERIOD: 1h
     ports:
       - "${INFLUXDB_PORT:-8087}:8181"
     volumes:
       - influxdb_data:/var/lib/influxdb3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    stop_grace_period: 30s
+    stop_signal: SIGTERM
     networks:
       - waterpump-network
     restart: unless-stopped

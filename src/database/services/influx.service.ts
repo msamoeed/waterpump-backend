@@ -377,5 +377,64 @@ export class InfluxService {
     }
   }
 
+  // Execute raw SQL queries (for WAL management)
+  async executeQuery(sql: string): Promise<any[]> {
+    try {
+      const result = [];
+      for await (const row of this.influx3Client.query(sql)) {
+        result.push(row);
+      }
+      return result;
+    } catch (error) {
+      console.error(`Failed to execute query: ${sql}`, error);
+      throw error;
+    }
+  }
+
+  // Enhanced write method with WAL optimization
+  async writePoints(points: any[], options?: { batchSize?: number; flushInterval?: number }): Promise<void> {
+    const batchSize = options?.batchSize || 100;
+    const flushInterval = options?.flushInterval || 5000; // 5 seconds
+
+    try {
+      // Write in batches to optimize WAL usage
+      for (let i = 0; i < points.length; i += batchSize) {
+        const batch = points.slice(i, i + batchSize);
+        await this.influx3Client.write(batch);
+        
+        // Small delay between batches to prevent overwhelming
+        if (i + batchSize < points.length) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+
+      console.log(`[DEBUG] Successfully wrote ${points.length} points in batches of ${batchSize}`);
+    } catch (error) {
+      console.error('Failed to write points', error);
+      throw error;
+    }
+  }
+
+  // Get InfluxDB system information
+  async getSystemInfo() {
+    try {
+      // Test connectivity by executing a simple query
+      const version = await this.executeQuery('SELECT 1 as test');
+      
+      return {
+        healthy: true,
+        version: 'InfluxDB 3.3 Core',
+        timestamp: new Date()
+      };
+    } catch (error) {
+      console.error('Failed to get system info', error);
+      return {
+        healthy: false,
+        version: 'unknown',
+        timestamp: new Date(),
+        error: error.message
+      };
+    }
+  }
 
 } 
