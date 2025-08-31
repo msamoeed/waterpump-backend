@@ -77,7 +77,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   handleSubscribeDevice(client: Socket, deviceId: string) {
     client.join(`device_${deviceId}`);
     
-    // Track client subscription
+    // Track client subscription'
     if (!this.connectedClients.has(deviceId)) {
       this.connectedClients.set(deviceId, new Set());
     }
@@ -129,7 +129,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   @SubscribeMessage('motor_control')
-  async handleMotorControl(client: Socket, data: { device_id: string; action: 'start' | 'stop'; reason?: string }) {
+  async handleMotorControl(client: Socket, data: { device_id: string; action: 'start' | 'stop'; reason?: string; target_level?: number }) {
     this.logger.log(`Motor control request for device ${data.device_id}: ${data.action}`);
     
     try {
@@ -138,6 +138,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         reason: data.reason || `${data.action === 'start' ? 'Manual start' : 'Manual stop'} from mobile app`,
         device_id: data.device_id,
         source: 'mobile',
+        target_level: data.target_level,
       });
 
       // Send response back to client
@@ -148,6 +149,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         message: `Motor ${data.action} command processed successfully`,
         motor_state: result.state,
         timestamp: new Date().toISOString(),
+        target_level: data.target_level,
       });
 
       // Emit updated system data to all subscribers
