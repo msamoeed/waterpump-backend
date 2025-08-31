@@ -1,4 +1,4 @@
-import { Injectable, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, Inject, forwardRef, OnModuleInit } from '@nestjs/common';
 import { InfluxService } from '../../database/services/influx.service';
 import { RedisService } from '../../database/services/redis.service';
 import { PostgresService } from '../../database/services/postgres.service';
@@ -7,7 +7,7 @@ import { DeviceStatusUpdateDto, PumpCommandDto } from '../../common/dto/device-s
 import { DeviceUpdateEvent, PumpEvent, AlertEvent } from '../../common/interfaces/websocket-events.interface';
 
 @Injectable()
-export class DevicesService {
+export class DevicesService implements OnModuleInit {
   constructor(
     @Inject('INFLUXDB_SERVICE') public influxService: InfluxService,
     @Inject('REDIS_SERVICE') private redisService: RedisService,
@@ -15,15 +15,27 @@ export class DevicesService {
     @Inject(forwardRef(() => WebSocketGateway)) private websocketGateway: WebSocketGateway,
   ) {}
 
+  async onModuleInit() {
+    // Warm up device cache on startup to reduce PostgreSQL queries
+    await this.warmUpDeviceCache();
+  }
+
   async updateDeviceStatus(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
     const timestamp = new Date();
 
-    // Check if device exists in PostgreSQL, create if it doesn't
-    let device = await this.postgresService.getDevice(statusUpdate.device_id);
-    if (!device) {
+    // Check device existence in Redis cache first (fast, lightweight)
+    let deviceExists = await this.redisService.getDeviceExists(statusUpdate.device_id);
+    
+    if (deviceExists === null) {
+      // Cache miss - check PostgreSQL and cache the result
+      deviceExists = await this.postgresService.deviceExists(statusUpdate.device_id);
+      await this.redisService.setDeviceExists(statusUpdate.device_id, deviceExists, 3600); // 1 hour TTL
+    }
+
+    if (!deviceExists) {
       console.log(`Creating new device: ${statusUpdate.device_id}`);
       try {
-        device = await this.postgresService.createDevice({
+        const device = await this.postgresService.createDevice({
           device_id: statusUpdate.device_id,
           name: `ESP32 Controller - ${statusUpdate.device_id}`,
           location: 'Water Pump System',
@@ -31,12 +43,24 @@ export class DevicesService {
           pump_max_current: 10.0, // Default value
         });
         console.log(`Device created successfully: ${device.device_id}`);
+        
+        // Cache the new device existence
+        await this.redisService.setDeviceExists(statusUpdate.device_id, true, 3600);
+        
+        // Cache basic device info
+        await this.redisService.setDeviceBasicInfo(statusUpdate.device_id, {
+          id: device.id,
+          device_id: device.device_id,
+          name: device.name,
+          location: device.location
+        }, 3600);
+        
       } catch (error) {
         console.error(`Failed to create device ${statusUpdate.device_id}:`, error);
         // Continue without device creation to avoid blocking the status update
       }
     } else {
-      console.log(`Device already exists: ${statusUpdate.device_id}`);
+      console.log(`Device already exists: ${statusUpdate.device_id} (from cache)`);
     }
 
     // Store in InfluxDB (parallel execution)
@@ -355,9 +379,16 @@ export class DevicesService {
 
   private async checkAndProcessAlerts(statusUpdate: DeviceStatusUpdateDto): Promise<void> {
     try {
-      // Ensure device exists before processing alerts
-      let device = await this.postgresService.getDevice(statusUpdate.device_id);
-      if (!device) {
+      // Check device existence in Redis cache first (fast, lightweight)
+      let deviceExists = await this.redisService.getDeviceExists(statusUpdate.device_id);
+      
+      if (deviceExists === null) {
+        // Cache miss - check PostgreSQL and cache the result
+        deviceExists = await this.postgresService.deviceExists(statusUpdate.device_id);
+        await this.redisService.setDeviceExists(statusUpdate.device_id, deviceExists, 3600);
+      }
+      
+      if (!deviceExists) {
         console.log(`Device ${statusUpdate.device_id} not found, skipping alerts`);
         return;
       }
@@ -427,9 +458,16 @@ export class DevicesService {
 
   private async processAlerts(deviceId: string, alerts: any[]): Promise<void> {
     try {
-      // Verify device exists before processing alerts
-      const device = await this.postgresService.getDevice(deviceId);
-      if (!device) {
+      // Check device existence in Redis cache first (fast, lightweight)
+      let deviceExists = await this.redisService.getDeviceExists(deviceId);
+      
+      if (deviceExists === null) {
+        // Cache miss - check PostgreSQL and cache the result
+        deviceExists = await this.postgresService.deviceExists(deviceId);
+        await this.redisService.setDeviceExists(deviceId, deviceExists, 3600);
+      }
+      
+      if (!deviceExists) {
         console.log(`Device ${deviceId} not found, skipping alert processing`);
         return;
       }
@@ -864,6 +902,36 @@ export class DevicesService {
         message: `[${level}] ${log.message}`,
         severity: level === 'error' ? 'critical' : level === 'warn' ? 'high' : 'low',
       });
+    }
+  }
+
+  /**
+   * Warm up Redis cache with existing devices to reduce PostgreSQL queries
+   * Call this on service startup
+   */
+  async warmUpDeviceCache(): Promise<void> {
+    try {
+      console.log('Warming up device cache...');
+      
+      // Get all existing devices from PostgreSQL
+      const devices = await this.postgresService.getAllDevices();
+      
+      // Cache device existence and basic info
+      const cachePromises = devices.map(async (device) => {
+        await this.redisService.setDeviceExists(device.device_id, true, 3600);
+        await this.redisService.setDeviceBasicInfo(device.device_id, {
+          id: device.id,
+          device_id: device.device_id,
+          name: device.name,
+          location: device.location
+        }, 3600);
+      });
+      
+      await Promise.all(cachePromises);
+      console.log(`Device cache warmed up with ${devices.length} devices`);
+      
+    } catch (error) {
+      console.error('Error warming up device cache:', error);
     }
   }
 } 
