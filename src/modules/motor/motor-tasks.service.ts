@@ -23,6 +23,7 @@ export class MotorTasksService implements OnModuleInit {
     this.pendingStateCheckInterval = setInterval(async () => {
       try {
         await this.motorService.clearStuckPendingStates();
+        await this.motorService.checkOrphanedPendingStates();
       } catch (error) {
         console.error('Error clearing stuck pending states:', error);
       }

@@ -129,27 +129,30 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
   }
 
   @SubscribeMessage('motor_control')
-  async handleMotorControl(client: Socket, data: { device_id: string; action: 'start' | 'stop'; reason?: string; target_level?: number }) {
+  async handleMotorControl(client: Socket, data: { device_id: string; action: 'start' | 'stop' | 'target'; reason?: string; target_level?: number }) {
     this.logger.log(`Motor control request for device ${data.device_id}: ${data.action}`);
     
     try {
       const result = await this.motorService.processMotorCommand({
         action: data.action,
-        reason: data.reason || `${data.action === 'start' ? 'Manual start' : 'Manual stop'} from mobile app`,
+        reason: data.reason || `${data.action === 'start' ? 'Manual start' : data.action === 'stop' ? 'Manual stop' : 'Manual target'} from mobile app`,
         device_id: data.device_id,
         source: 'mobile',
         target_level: data.target_level,
       });
 
-      // Send response back to client
+      // Send response back to client with conflict resolution info
       client.emit('motor_control_response', {
         device_id: data.device_id,
         success: result.success,
         action: data.action,
-        message: `Motor ${data.action} command processed successfully`,
+        message: result.success ? 
+          `Motor ${data.action} command processed successfully` : 
+          result.conflictResolution?.reason || 'Command failed',
         motor_state: result.state,
         timestamp: new Date().toISOString(),
         target_level: data.target_level,
+        conflict_resolution: result.conflictResolution,
       });
 
       // Emit updated system data to all subscribers
@@ -163,6 +166,11 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         action: data.action,
         message: error.message,
         timestamp: new Date().toISOString(),
+        conflict_resolution: {
+          type: 'error',
+          reason: error.message,
+          suggestedAction: 'Check device status and try again',
+        }
       });
     }
   }
@@ -194,6 +202,38 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         success: false,
         message: error.message,
         reason: data.reason || 'Clear pending states from mobile app',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
+  @SubscribeMessage('force_clear_pending_states')
+  async handleForceClearPendingStates(client: Socket, data: { device_id: string; reason?: string }) {
+    this.logger.log(`Force clear pending states request for device ${data.device_id}`);
+    
+    try {
+      const updatedState = await this.motorService.forceClearAllPendingStates(data.device_id);
+
+      // Send response back to client
+      client.emit('force_clear_pending_states_response', {
+        device_id: data.device_id,
+        success: true,
+        message: 'All pending states force cleared successfully',
+        reason: data.reason || 'Force clear pending states from mobile app',
+        motor_state: updatedState,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Emit updated system data to all subscribers
+      this.emitSystemDataUpdate(data.device_id);
+      
+    } catch (error) {
+      this.logger.error(`Force clear pending states error for device ${data.device_id}: ${error.message}`);
+      client.emit('force_clear_pending_states_response', {
+        device_id: data.device_id,
+        success: false,
+        message: error.message,
+        reason: data.reason || 'Force clear pending states from mobile app',
         timestamp: new Date().toISOString(),
       });
     }

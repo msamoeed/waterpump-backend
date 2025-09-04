@@ -325,10 +325,18 @@ export interface SystemDataEvent {
 export interface MotorControlResponseEvent {
   device_id: string;
   success: boolean;
-  action: 'start' | 'stop';
+  action: 'start' | 'stop' | 'target';
   message: string;
   motor_state?: any; // Updated motor state after command
   timestamp: string;
+  target_level?: number;
+  conflict_resolution?: {
+    type?: string;
+    reason?: string;
+    currentState?: any;
+    suggestedAction?: string;
+    message?: string;
+  };
 }
 
 export interface ServerToClientEvents {
