@@ -167,6 +167,38 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
     }
   }
 
+  @SubscribeMessage('clear_pending_states')
+  async handleClearPendingStates(client: Socket, data: { device_id: string; reason?: string }) {
+    this.logger.log(`Clear pending states request for device ${data.device_id}`);
+    
+    try {
+      const updatedState = await this.motorService.clearPendingStates(data.device_id);
+
+      // Send response back to client
+      client.emit('clear_pending_states_response', {
+        device_id: data.device_id,
+        success: true,
+        message: 'Pending states cleared successfully',
+        reason: data.reason || 'Clear pending states from mobile app',
+        motor_state: updatedState,
+        timestamp: new Date().toISOString(),
+      });
+
+      // Emit updated system data to all subscribers
+      this.emitSystemDataUpdate(data.device_id);
+      
+    } catch (error) {
+      this.logger.error(`Clear pending states error for device ${data.device_id}: ${error.message}`);
+      client.emit('clear_pending_states_response', {
+        device_id: data.device_id,
+        success: false,
+        message: error.message,
+        reason: data.reason || 'Clear pending states from mobile app',
+        timestamp: new Date().toISOString(),
+      });
+    }
+  }
+
   @SubscribeMessage('request_ota_update')
   async handleRequestOTAUpdate(client: Socket, deviceId: string) {
     this.logger.log(`OTA update requested for device ${deviceId}`);

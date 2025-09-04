@@ -229,6 +229,15 @@ export interface DeviceLogEvent {
   timestamp: string;
 }
 
+export interface ClearPendingStatesResponseEvent {
+  device_id: string;
+  success: boolean;
+  message: string;
+  reason: string;
+  motor_state?: any;
+  timestamp: string;
+}
+
 export interface SystemDataEvent {
   device_id: string;
   motor_state: {
@@ -346,6 +355,7 @@ export interface ServerToClientEvents {
   sensor_status_response: (data: SensorStatusResponseEvent) => void;
   sensor_override_response: (data: SensorOverrideResponseEvent) => void;
   sensor_check_response: (data: SensorCheckResponseEvent) => void;
+  clear_pending_states_response: (data: ClearPendingStatesResponseEvent) => void;
 }
 
 export interface ClientToServerEvents {
@@ -362,4 +372,5 @@ export interface ClientToServerEvents {
   get_sensor_status: (deviceId: string) => void;
   override_sensor_monitoring: (data: { device_id: string; enable: boolean; reason?: string }) => void;
   force_sensor_check: (deviceId: string) => void;
+  clear_pending_states: (data: { device_id: string; reason?: string }) => void;
 } 

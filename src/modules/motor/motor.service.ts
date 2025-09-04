@@ -246,6 +246,66 @@ export class MotorService {
   }
 
   /**
+   * Clear stuck pending states (timeout after 5 minutes)
+   */
+  async clearStuckPendingStates(): Promise<void> {
+    const timeoutThreshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes
+
+    const stuckStates = await this.motorStateRepository
+      .createQueryBuilder()
+      .where('pending_command_timestamp < :threshold', { threshold: timeoutThreshold })
+      .andWhere('(pending_motor_running IS NOT NULL OR pending_control_mode IS NOT NULL OR pending_target_active IS NOT NULL OR pending_target_level IS NOT NULL)')
+      .getMany();
+
+    for (const state of stuckStates) {
+      console.log(`Clearing stuck pending states for device: ${state.deviceId}`);
+      
+      await this.updateMotorState(state.deviceId, {
+        pending_motor_running: null,
+        pending_control_mode: null,
+        pending_target_active: null,
+        pending_target_level: null,
+        pending_command_id: null,
+        pending_command_timestamp: null,
+      });
+
+      // Log the timeout
+      await this.postgresService.insertEventLog({
+        device_id: state.deviceId,
+        event_type: 'pending_state_timeout',
+        message: 'Pending states cleared due to timeout (5 minutes)',
+        severity: 'warning',
+      });
+    }
+  }
+
+  /**
+   * Manually clear all pending states for a device
+   */
+  async clearPendingStates(deviceId: string): Promise<MotorState> {
+    console.log(`Manually clearing pending states for device: ${deviceId}`);
+    
+    const updatedState = await this.updateMotorState(deviceId, {
+      pending_motor_running: null,
+      pending_control_mode: null,
+      pending_target_active: null,
+      pending_target_level: null,
+      pending_command_id: null,
+      pending_command_timestamp: null,
+    });
+
+    // Log the manual clear
+    await this.postgresService.insertEventLog({
+      device_id: deviceId,
+      event_type: 'pending_state_cleared',
+      message: 'Pending states manually cleared',
+      severity: 'info',
+    });
+
+    return updatedState;
+  }
+
+  /**
    * Get all motor states (for dashboard/monitoring)
    */
   async getAllMotorStates(): Promise<MotorState[]> {
@@ -432,6 +492,18 @@ export class MotorService {
         Math.abs(currentState.pendingTargetLevel - heartbeat.current_target_level) < 0.1) {
       pendingClears.pending_target_level = null;
       console.log(`Pending target level resolved: ${heartbeat.current_target_level}`);
+    }
+
+    // Additional safety: Clear all pending states if MCU is offline or if command is very old
+    const commandAge = currentState.pendingCommandTimestamp ? 
+      Date.now() - currentState.pendingCommandTimestamp.getTime() : 0;
+    
+    if (commandAge > 10 * 60 * 1000) { // 10 minutes
+      console.log(`Clearing old pending states (${Math.round(commandAge / 60000)} minutes old)`);
+      pendingClears.pending_motor_running = null;
+      pendingClears.pending_control_mode = null;
+      pendingClears.pending_target_active = null;
+      pendingClears.pending_target_level = null;
     }
 
     // Clear command ID and timestamp if any pending state was resolved

@@ -4,6 +4,7 @@ import { MotorService } from './motor.service';
 @Injectable()
 export class MotorTasksService implements OnModuleInit {
   private offlineCheckInterval: NodeJS.Timeout;
+  private pendingStateCheckInterval: NodeJS.Timeout;
   private statusLogInterval: NodeJS.Timeout;
 
   constructor(private readonly motorService: MotorService) {}
@@ -17,6 +18,15 @@ export class MotorTasksService implements OnModuleInit {
         console.error('Error checking offline devices:', error);
       }
     }, 60000); // 1 minute
+
+    // Clear stuck pending states every 2 minutes
+    this.pendingStateCheckInterval = setInterval(async () => {
+      try {
+        await this.motorService.clearStuckPendingStates();
+      } catch (error) {
+        console.error('Error clearing stuck pending states:', error);
+      }
+    }, 120000); // 2 minutes
 
     // Log motor system status every 5 minutes
     this.statusLogInterval = setInterval(async () => {
@@ -36,6 +46,9 @@ export class MotorTasksService implements OnModuleInit {
   onModuleDestroy() {
     if (this.offlineCheckInterval) {
       clearInterval(this.offlineCheckInterval);
+    }
+    if (this.pendingStateCheckInterval) {
+      clearInterval(this.pendingStateCheckInterval);
     }
     if (this.statusLogInterval) {
       clearInterval(this.statusLogInterval);

@@ -167,4 +167,23 @@ export class MotorController {
       );
     }
   }
+
+  @Post('clear-pending-states/:deviceId')
+  async clearPendingStates(@Param('deviceId') deviceId: string) {
+    try {
+      const updatedState = await this.motorService.clearPendingStates(deviceId);
+      
+      return {
+        success: true,
+        message: 'Pending states cleared successfully',
+        state: updatedState,
+        timestamp: new Date().toISOString(),
+      };
+    } catch (error) {
+      throw new HttpException(
+        `Failed to clear pending states: ${error.message}`,
+        HttpStatus.INTERNAL_SERVER_ERROR
+      );
+    }
+  }
 }
