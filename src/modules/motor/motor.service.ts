@@ -752,30 +752,37 @@ export class MotorService {
     });
 
     // Clear pending motor running state if MCU state matches pending state
-    if (currentState.pendingMotorRunning !== undefined && 
+    if (currentState.pendingMotorRunning !== null && 
+        currentState.pendingMotorRunning !== undefined &&
         currentState.pendingMotorRunning === heartbeat.motor_running) {
       pendingClears.pending_motor_running = null;
       console.log(`✅ Pending motor running state resolved: ${heartbeat.motor_running}`);
-    } else if (currentState.pendingMotorRunning !== undefined) {
+    } else if (currentState.pendingMotorRunning !== null && currentState.pendingMotorRunning !== undefined) {
       console.log(`❌ Pending motor running state NOT resolved: pending=${currentState.pendingMotorRunning}, actual=${heartbeat.motor_running}`);
+    } else if (currentState.pendingMotorRunning === null) {
+      console.log(`ℹ️ Pending motor running state already cleared (null)`);
     }
 
     // Clear pending control mode if MCU state matches pending state
-    if (currentState.pendingControlMode !== undefined && 
+    if (currentState.pendingControlMode !== null && 
+        currentState.pendingControlMode !== undefined &&
         currentState.pendingControlMode === heartbeat.control_mode) {
       pendingClears.pending_control_mode = null;
       console.log(`✅ Pending control mode resolved: ${heartbeat.control_mode}`);
-    } else if (currentState.pendingControlMode !== undefined) {
+    } else if (currentState.pendingControlMode !== null && currentState.pendingControlMode !== undefined) {
       console.log(`❌ Pending control mode NOT resolved: pending=${currentState.pendingControlMode}, actual=${heartbeat.control_mode}`);
+    } else if (currentState.pendingControlMode === null) {
+      console.log(`ℹ️ Pending control mode already cleared (null)`);
     }
 
     // Clear pending target active state if MCU state matches pending state
-    if (currentState.pendingTargetActive !== undefined && 
+    if (currentState.pendingTargetActive !== null && 
+        currentState.pendingTargetActive !== undefined &&
         heartbeat.target_mode_active !== undefined &&
         currentState.pendingTargetActive === heartbeat.target_mode_active) {
       pendingClears.pending_target_active = null;
       console.log(`✅ Pending target active state resolved: ${heartbeat.target_mode_active}`);
-    } else if (currentState.pendingTargetActive !== undefined) {
+    } else if (currentState.pendingTargetActive !== null && currentState.pendingTargetActive !== undefined) {
       console.log(`❌ Pending target active state NOT resolved: pending=${currentState.pendingTargetActive}, actual=${heartbeat.target_mode_active} (undefined=${heartbeat.target_mode_active === undefined})`);
       
       // Fallback: If target_mode_active is undefined in heartbeat, assume it's false (not in target mode)
@@ -784,16 +791,21 @@ export class MotorService {
         pendingClears.pending_target_active = null;
         console.log(`✅ Pending target active state resolved via fallback (assumed false): ${currentState.pendingTargetActive}`);
       }
+    } else if (currentState.pendingTargetActive === null) {
+      console.log(`ℹ️ Pending target active state already cleared (null)`);
     }
 
     // Clear pending target level if MCU state matches (with tolerance for floating point)
-    if (currentState.pendingTargetLevel !== undefined && 
+    if (currentState.pendingTargetLevel !== null && 
+        currentState.pendingTargetLevel !== undefined &&
         heartbeat.current_target_level !== undefined &&
         Math.abs(currentState.pendingTargetLevel - heartbeat.current_target_level) < 0.1) {
       pendingClears.pending_target_level = null;
       console.log(`✅ Pending target level resolved: ${heartbeat.current_target_level}`);
-    } else if (currentState.pendingTargetLevel !== undefined) {
+    } else if (currentState.pendingTargetLevel !== null && currentState.pendingTargetLevel !== undefined) {
       console.log(`❌ Pending target level NOT resolved: pending=${currentState.pendingTargetLevel}, actual=${heartbeat.current_target_level}`);
+    } else if (currentState.pendingTargetLevel === null) {
+      console.log(`ℹ️ Pending target level already cleared (null)`);
     }
 
     // Additional safety: Clear all pending states if MCU is offline or if command is very old
