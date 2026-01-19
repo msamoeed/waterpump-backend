@@ -20,8 +20,25 @@ export class PostgresService {
 
   // Device operations
   async createDevice(deviceData: Partial<Device>): Promise<Device> {
-    const device = this.deviceRepository.create(deviceData);
-    return await this.deviceRepository.save(device);
+    if (!deviceData.device_id) {
+      throw new Error('device_id is required to create a device');
+    }
+
+    // Idempotent insert to avoid duplicate-key errors under retries/concurrency.
+    // This preserves existing DB values (no overwrites) and ensures a Device is returned.
+    await this.deviceRepository
+      .createQueryBuilder()
+      .insert()
+      .into(Device)
+      .values(deviceData)
+      .orIgnore()
+      .execute();
+
+    const device = await this.getDeviceBasic(deviceData.device_id);
+    if (!device) {
+      throw new Error(`Failed to create or load device: ${deviceData.device_id}`);
+    }
+    return device;
   }
 
   async getDevice(deviceId: string): Promise<Device | null> {

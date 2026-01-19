@@ -186,4 +186,39 @@ export class RedisService {
   async ping(): Promise<string> {
     return await this.client.ping();
   }
+
+  /**
+   * Cache device existence to avoid frequent PostgreSQL queries
+   */
+  async setDeviceExists(deviceId: string, exists: boolean, ttl: number = 3600): Promise<void> {
+    const key = `device:${deviceId}:exists`;
+    await this.client.set(key, exists ? 'true' : 'false', 'EX', ttl);
+  }
+
+  /**
+   * Get cached device existence status
+   */
+  async getDeviceExists(deviceId: string): Promise<boolean | null> {
+    const key = `device:${deviceId}:exists`;
+    const exists = await this.client.get(key);
+    if (exists === null) return null;
+    return exists === 'true';
+  }
+
+  /**
+   * Cache basic device info to avoid frequent PostgreSQL queries
+   */
+  async setDeviceBasicInfo(deviceId: string, deviceInfo: any, ttl: number = 3600): Promise<void> {
+    const key = `device:${deviceId}:basic`;
+    await this.client.set(key, JSON.stringify(deviceInfo), 'EX', ttl);
+  }
+
+  /**
+   * Get cached basic device info
+   */
+  async getDeviceBasicInfo(deviceId: string): Promise<any | null> {
+    const key = `device:${deviceId}:basic`;
+    const data = await this.client.get(key);
+    return data ? JSON.parse(data) : null;
+  }
 } 
