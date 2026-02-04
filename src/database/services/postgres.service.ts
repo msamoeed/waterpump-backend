@@ -34,7 +34,10 @@ export class PostgresService {
       .orIgnore()
       .execute();
 
-    const device = await this.getDeviceBasic(deviceData.device_id);
+    // Load and return the device (either newly inserted or pre-existing if we raced).
+    const device = await this.deviceRepository.findOne({
+      where: { device_id: deviceData.device_id },
+    });
     if (!device) {
       throw new Error(`Failed to create or load device: ${deviceData.device_id}`);
     }
