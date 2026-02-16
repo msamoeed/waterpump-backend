@@ -589,7 +589,7 @@ export class MotorService {
   }> {
     // Check if there are old pending states that might indicate sync issues
     if (currentState.pendingCommandTimestamp) {
-      const pendingAge = Date.now() - currentState.pendingCommandTimestamp.getTime();
+      const pendingAge = Date.now() - new Date(currentState.pendingCommandTimestamp).getTime();
       if (pendingAge > 60000) { // 1 minute
         return {
           hasIssue: true,
@@ -809,8 +809,8 @@ export class MotorService {
     }
 
     // Additional safety: Clear all pending states if MCU is offline or if command is very old
-    const commandAge = currentState.pendingCommandTimestamp ? 
-      Date.now() - currentState.pendingCommandTimestamp.getTime() : 0;
+    const commandAge = currentState.pendingCommandTimestamp ?
+      Date.now() - new Date(currentState.pendingCommandTimestamp).getTime() : 0;
     
     if (commandAge > 10 * 60 * 1000) { // 10 minutes
       console.log(`⚠️ Clearing old pending states (${Math.round(commandAge / 60000)} minutes old)`);
