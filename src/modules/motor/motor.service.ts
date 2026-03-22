@@ -250,121 +250,63 @@ export class MotorService {
   }
 
   /**
-   * Check for offline MCUs and mark them
+   * Check for offline MCUs and mark them (Redis-based)
    */
   async checkOfflineDevices(): Promise<void> {
-    const offlineThreshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes
+    const offlineThresholdMs = Date.now() - 2 * 60 * 1000; // 2 minutes
+    const keys = await this.redisService.keys('motor_state:*');
 
-    await this.motorStateRepository
-      .createQueryBuilder()
-      .update(MotorState)
-      .set({ mcuOnline: false })
-      .where('last_heartbeat < :threshold OR last_heartbeat IS NULL', { threshold: offlineThreshold })
-      .andWhere('mcu_online = :online', { online: true })
-      .execute();
-  }
+    for (const key of keys) {
+      const deviceId = key.replace('motor_state:', '');
+      const stateData = await this.redisService.getMotorState(deviceId);
+      if (!stateData) continue;
 
-  /**
-   * Clear stuck pending states (timeout after 2 minutes)
-   */
-  async clearStuckPendingStates(): Promise<void> {
-    const timeoutThreshold = new Date(Date.now() - 2 * 60 * 1000); // 2 minutes
-
-    const stuckStates = await this.motorStateRepository
-      .createQueryBuilder()
-      .where('pending_command_timestamp < :threshold', { threshold: timeoutThreshold })
-      .andWhere('(pending_motor_running IS NOT NULL OR pending_control_mode IS NOT NULL OR pending_target_active IS NOT NULL OR pending_target_level IS NOT NULL)')
-      .getMany();
-
-    for (const state of stuckStates) {
-      console.log(`Clearing stuck pending states for device: ${state.deviceId}`);
-      
-      await this.updateMotorState(state.deviceId, {
-        pending_motor_running: null,
-        pending_control_mode: null,
-        pending_target_active: null,
-        pending_target_level: null,
-        pending_command_id: null,
-        pending_command_timestamp: null,
-      });
-
-      // Log the timeout
-      await this.postgresService.insertEventLog({
-        device_id: state.deviceId,
-        event_type: 'pending_state_timeout',
-        message: 'Pending states cleared due to timeout (2 minutes)',
-        severity: 'warning',
-      });
+      const state = JSON.parse(stateData);
+      if (state.mcuOnline && state.lastHeartbeat && new Date(state.lastHeartbeat).getTime() < offlineThresholdMs) {
+        await this.markDeviceOffline(deviceId);
+      }
     }
   }
 
   /**
-   * Force clear all pending states for a device (emergency cleanup)
+   * Mark a device as offline in Redis (and clear pending states)
    */
-  async forceClearAllPendingStates(deviceId: string): Promise<MotorState> {
-    console.log(`Force clearing ALL pending states for device: ${deviceId}`);
-    
-    const updatedState = await this.updateMotorState(deviceId, {
-      pending_motor_running: null,
-      pending_control_mode: null,
-      pending_target_active: null,
-      pending_target_level: null,
-      pending_command_id: null,
-      pending_command_timestamp: null,
-    });
+  async markDeviceOffline(deviceId: string): Promise<void> {
+    console.log(`Marking device offline: ${deviceId}`);
+    const stateData = await this.redisService.getMotorState(deviceId);
+    if (!stateData) return;
 
-    // Log the force clear
-    await this.postgresService.insertEventLog({
-      device_id: deviceId,
-      event_type: 'pending_state_force_cleared',
-      message: 'All pending states force cleared (emergency cleanup)',
-      severity: 'warning',
-    });
+    const state = JSON.parse(stateData);
+    const updated = {
+      ...state,
+      mcuOnline: false,
+      motorRunning: false,
+      pendingMotorRunning: null,
+      pendingControlMode: null,
+      pendingTargetActive: null,
+      pendingTargetLevel: null,
+      pendingCommandId: null,
+      pendingCommandTimestamp: null,
+      updatedAt: new Date().toISOString(),
+      lastUpdate: Date.now(),
+    };
+    await this.redisService.setMotorState(deviceId, updated, 7200);
 
-    return updatedState;
+    setImmediate(async () => {
+      try {
+        await this.motorStateRepository.save(updated);
+      } catch (error) {
+        console.error(`Failed to backup offline state to PostgreSQL: ${error.message}`);
+      }
+    });
   }
 
   /**
-   * Check for orphaned pending states (MCU offline for extended period)
-   */
-  async checkOrphanedPendingStates(): Promise<void> {
-    const offlineThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes offline
-
-    const orphanedStates = await this.motorStateRepository
-      .createQueryBuilder()
-      .where('mcu_online = :online', { online: false })
-      .andWhere('last_heartbeat < :threshold', { threshold: offlineThreshold })
-      .andWhere('(pending_motor_running IS NOT NULL OR pending_control_mode IS NOT NULL OR pending_target_active IS NOT NULL OR pending_target_level IS NOT NULL)')
-      .getMany();
-
-    for (const state of orphanedStates) {
-      console.log(`Clearing orphaned pending states for offline device: ${state.deviceId}`);
-      
-      await this.updateMotorState(state.deviceId, {
-        pending_motor_running: null,
-        pending_control_mode: null,
-        pending_target_active: null,
-        pending_target_level: null,
-        pending_command_id: null,
-        pending_command_timestamp: null,
-      });
-
-      // Log the orphaned clear
-      await this.postgresService.insertEventLog({
-        device_id: state.deviceId,
-        event_type: 'pending_state_orphaned_cleared',
-        message: 'Pending states cleared for offline device (5+ minutes)',
-        severity: 'warning',
-      });
-    }
-  }
-
-  /**
-   * Manually clear all pending states for a device
+   * Clear pending states for a specific device
    */
   async clearPendingStates(deviceId: string): Promise<MotorState> {
-    console.log(`Manually clearing pending states for device: ${deviceId}`);
-    
+    console.log(`Clearing pending states for device: ${deviceId}`);
+
     const updatedState = await this.updateMotorState(deviceId, {
       pending_motor_running: null,
       pending_control_mode: null,
@@ -374,15 +316,38 @@ export class MotorService {
       pending_command_timestamp: null,
     });
 
-    // Log the manual clear
     await this.postgresService.insertEventLog({
       device_id: deviceId,
       event_type: 'pending_state_cleared',
-      message: 'Pending states manually cleared',
+      message: 'Pending states cleared',
       severity: 'info',
     });
 
     return updatedState;
+  }
+
+  /**
+   * Clear stuck pending states across all devices (Redis-based safety net, called every 30s)
+   */
+  async clearAllStuckPendingStates(): Promise<void> {
+    const timeoutMs = Date.now() - 2 * 60 * 1000; // 2-minute timeout
+    const keys = await this.redisService.keys('motor_state:*');
+
+    for (const key of keys) {
+      const deviceId = key.replace('motor_state:', '');
+      const stateData = await this.redisService.getMotorState(deviceId);
+      if (!stateData) continue;
+
+      const state = JSON.parse(stateData);
+      const hasPending = state.pendingCommandId !== null && state.pendingCommandId !== undefined;
+      const isStuck = state.pendingCommandTimestamp &&
+        new Date(state.pendingCommandTimestamp).getTime() < timeoutMs;
+
+      if (hasPending && isStuck) {
+        console.log(`Clearing stuck pending states for device: ${deviceId}`);
+        await this.clearPendingStates(deviceId);
+      }
+    }
   }
 
   /**
@@ -619,44 +584,6 @@ export class MotorService {
     }
 
     return { hasIssue: false };
-  }
-
-  private calculateExpectedState(currentState: MotorState, command: MotorControlCommandDto): Partial<MotorStateUpdateDto> {
-    const expectedState: Partial<MotorStateUpdateDto> = {};
-
-    switch (command.action) {
-      case 'start':
-        expectedState.motor_running = true;
-        expectedState.target_mode_active = false;
-        break;
-      case 'stop':
-        expectedState.motor_running = false;
-        expectedState.target_mode_active = false;
-        break;
-      case 'target':
-        expectedState.motor_running = true;
-        expectedState.target_mode_active = true;
-        expectedState.current_target_level = command.target_level;
-        expectedState.target_description = `Target ${command.target_level}"`;
-        break;
-      case 'auto':
-        expectedState.control_mode = 'auto';
-        break;
-      case 'manual':
-        expectedState.control_mode = 'manual';
-        break;
-      case 'reset_protection':
-        expectedState.protection_active = false;
-        break;
-      case 'enable_buzzer':
-        expectedState.buzzer_muted = false;
-        break;
-      case 'disable_buzzer':
-        expectedState.buzzer_muted = true;
-        break;
-    }
-
-    return expectedState;
   }
 
   private calculatePendingState(command: MotorControlCommandDto, commandId: string): Partial<MotorStateUpdateDto> {

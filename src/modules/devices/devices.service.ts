@@ -76,8 +76,28 @@ export class DevicesService implements OnModuleInit {
       300, // 5 minutes TTL
     );
 
+    // Write sensor status key so SensorMonitorService can read it event-driven
+    const sensorStatusPromise = this.redisService.set(
+      `sensor:${statusUpdate.device_id}:status`,
+      JSON.stringify({
+        ground_tank: {
+          connected: statusUpdate.ground_tank?.connected,
+          sensor_working: statusUpdate.ground_tank?.sensor_working,
+          level_percent: statusUpdate.ground_tank?.level_percent,
+          last_update: timestamp.toISOString(),
+        },
+        roof_tank: {
+          connected: statusUpdate.roof_tank?.connected,
+          sensor_working: statusUpdate.roof_tank?.sensor_working,
+          level_percent: statusUpdate.roof_tank?.level_percent,
+          last_update: timestamp.toISOString(),
+        },
+      }),
+      300, // 5 minutes TTL
+    );
+
     // Execute all database operations in parallel
-    await Promise.all([...influxPromises, redisPromise]);
+    await Promise.all([...influxPromises, redisPromise, sensorStatusPromise]);
 
     // Emit real-time update via WebSocket
     this.websocketGateway.emitDeviceUpdate(statusUpdate.device_id, {

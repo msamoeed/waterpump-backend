@@ -1,4 +1,4 @@
-import { Injectable, OnModuleInit, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, Inject, forwardRef } from '@nestjs/common';
 import { MotorService } from './motor.service';
 import { DevicesService } from '../devices/devices.service';
 import { RedisService } from '../../database/services/redis.service';
@@ -6,9 +6,7 @@ import { PostgresService } from '../../database/services/postgres.service';
 import { WebSocketGateway } from '../websocket/websocket.gateway';
 
 @Injectable()
-export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
-  private sensorCheckInterval: NodeJS.Timeout;
-  private readonly SENSOR_CHECK_INTERVAL = 10000; // 10 seconds
+export class SensorMonitorService implements OnModuleDestroy {
   private readonly SENSOR_OFFLINE_THRESHOLD = 30000; // 30 seconds
 
   constructor(
@@ -24,46 +22,14 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  onModuleInit() {
-    // Start monitoring sensors every 10 seconds
-    this.sensorCheckInterval = setInterval(async () => {
-      try {
-        await this.checkSensorStatusAndControlPump();
-      } catch (error) {
-        console.error('Error in sensor monitoring:', error);
-      }
-    }, this.SENSOR_CHECK_INTERVAL);
-
-    console.log('Sensor monitoring service started');
-  }
-
   onModuleDestroy() {
-    if (this.sensorCheckInterval) {
-      clearInterval(this.sensorCheckInterval);
-    }
+    // No intervals to clean up — sensor checks are event-driven
   }
 
   /**
-   * Check sensor status and automatically control the roof pump
+   * Process sensors for a specific device (public — called from gateway on each status update)
    */
-  private async checkSensorStatusAndControlPump(): Promise<void> {
-    try {
-      // Get all device keys from Redis
-      const deviceKeys = await this.redisService.getDeviceKeys();
-      
-      for (const key of deviceKeys) {
-        const deviceId = key.split(':')[1];
-        await this.processDeviceSensors(deviceId);
-      }
-    } catch (error) {
-      console.error('Error checking sensor status:', error);
-    }
-  }
-
-  /**
-   * Process sensors for a specific device
-   */
-  private async processDeviceSensors(deviceId: string): Promise<void> {
+  async processDeviceSensors(deviceId: string): Promise<void> {
     try {
       // Check if sensor monitoring is overridden
       const isOverridden = await this.isSensorMonitoringOverridden(deviceId);
@@ -699,16 +665,4 @@ export class SensorMonitorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /**
-   * Force sensor status check and emit update (for manual triggers)
-   */
-  async forceSensorStatusCheck(deviceId: string): Promise<void> {
-    try {
-      await this.processDeviceSensors(deviceId);
-      console.log(`Forced sensor status check completed for device ${deviceId}`);
-    } catch (error) {
-      console.error(`Error in forced sensor status check for device ${deviceId}:`, error);
-      throw error;
-    }
-  }
 }

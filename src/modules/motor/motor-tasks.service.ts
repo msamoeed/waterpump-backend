@@ -1,29 +1,28 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { MotorService } from './motor.service';
 
 @Injectable()
-export class MotorTasksService implements OnModuleInit {
+export class MotorTasksService implements OnModuleInit, OnModuleDestroy {
   private offlineCheckInterval: NodeJS.Timeout;
-  private pendingStateCheckInterval: NodeJS.Timeout;
+  private stuckPendingInterval: NodeJS.Timeout;
   private statusLogInterval: NodeJS.Timeout;
 
   constructor(private readonly motorService: MotorService) {}
 
   onModuleInit() {
-    // Check for offline MCUs every minute
+    // Check for offline MCUs every 30 seconds (Redis-based)
     this.offlineCheckInterval = setInterval(async () => {
       try {
         await this.motorService.checkOfflineDevices();
       } catch (error) {
         console.error('Error checking offline devices:', error);
       }
-    }, 60000); // 1 minute
+    }, 30000); // 30 seconds
 
-    // Clear stuck pending states every 2 minutes
-    this.pendingStateCheckInterval = setInterval(async () => {
+    // Clear stuck pending states every 2 minutes (safety net for missed command_acks)
+    this.stuckPendingInterval = setInterval(async () => {
       try {
-        await this.motorService.clearStuckPendingStates();
-        await this.motorService.checkOrphanedPendingStates();
+        await this.motorService.clearAllStuckPendingStates();
       } catch (error) {
         console.error('Error clearing stuck pending states:', error);
       }
@@ -45,14 +44,8 @@ export class MotorTasksService implements OnModuleInit {
   }
 
   onModuleDestroy() {
-    if (this.offlineCheckInterval) {
-      clearInterval(this.offlineCheckInterval);
-    }
-    if (this.pendingStateCheckInterval) {
-      clearInterval(this.pendingStateCheckInterval);
-    }
-    if (this.statusLogInterval) {
-      clearInterval(this.statusLogInterval);
-    }
+    if (this.offlineCheckInterval) clearInterval(this.offlineCheckInterval);
+    if (this.stuckPendingInterval) clearInterval(this.stuckPendingInterval);
+    if (this.statusLogInterval) clearInterval(this.statusLogInterval);
   }
 }
