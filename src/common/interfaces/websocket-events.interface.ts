@@ -247,6 +247,7 @@ export interface SystemDataEvent {
     currentTargetLevel?: number;
     targetDescription?: string;
     protectionActive: boolean;
+    buzzerMuted: boolean;
     currentAmps: number;
     powerWatts: number;
     runtimeMinutes: number;
