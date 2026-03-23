@@ -553,6 +553,7 @@ export class WebSocketGateway implements OnGatewayConnection, OnGatewayDisconnec
         currentTargetLevel: motorState.currentTargetLevel,
         targetDescription: motorState.targetDescription,
         protectionActive: motorState.protectionActive,
+        buzzerMuted: motorState.buzzerMuted,
         currentAmps: motorState.currentAmps,
         powerWatts: motorState.powerWatts,
         runtimeMinutes: motorState.runtimeMinutes,
