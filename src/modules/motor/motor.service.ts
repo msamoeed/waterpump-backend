@@ -16,65 +16,30 @@ export class MotorService {
   ) {}
 
   /**
-   * Get the current motor state for a device (Redis as single source of truth).
-   * PostgreSQL is only consulted asynchronously in the background — never blocks the response.
+   * Get the current motor state for a device (Redis as single source of truth)
    */
   async getMotorState(deviceId: string): Promise<MotorState> {
-    // Redis is primary — fast path for all connected/active devices
+    // Redis is primary - check first
     const redisState = await this.redisService.getMotorState(deviceId);
     if (redisState) {
       return JSON.parse(redisState);
     }
 
-    // Redis miss (cold start / TTL expired): return a default state immediately
-    // and populate Redis + PostgreSQL asynchronously so future calls are fast.
-    // The real state will arrive from the ESP32 within 30s via WebSocket heartbeat.
-    const defaultState = this.buildDefaultMotorState(deviceId);
-    await this.redisService.setMotorState(deviceId, defaultState, 7200);
-
-    // Async: try to restore from PostgreSQL (won't block the response)
-    setImmediate(async () => {
-      try {
-        let dbState = await this.motorStateRepository.findOne({ where: { deviceId } });
-        if (!dbState) {
-          dbState = await this.createDefaultMotorState(deviceId);
-        }
-        // Only overwrite Redis if the DB has a more meaningful state
-        if (dbState.lastHeartbeat) {
-          await this.redisService.setMotorState(deviceId, dbState, 7200);
-        }
-      } catch (err) {
-        console.error(`Background motor state restore failed for ${deviceId}: ${err.message}`);
-      }
+    // If not in Redis, check database as fallback for recovery
+    let motorState = await this.motorStateRepository.findOne({
+      where: { deviceId }
     });
 
-    console.log(`Motor state cache miss for device ${deviceId} — returning default, DB restore running in background`);
-    return defaultState as unknown as MotorState;
-  }
+    if (!motorState) {
+      // Create default state for new devices
+      motorState = await this.createDefaultMotorState(deviceId);
+    }
 
-  /** Build an in-memory default motor state without touching the database */
-  private buildDefaultMotorState(deviceId: string): object {
-    return {
-      deviceId,
-      motorRunning: false,
-      controlMode: 'auto',
-      targetModeActive: false,
-      protectionActive: false,
-      buzzerMuted: false,
-      currentAmps: 0,
-      powerWatts: 0,
-      runtimeMinutes: 0,
-      totalRuntimeHours: 0,
-      mcuOnline: false,
-      pendingMotorRunning: null,
-      pendingControlMode: null,
-      pendingTargetActive: null,
-      pendingTargetLevel: null,
-      pendingCommandId: null,
-      pendingCommandTimestamp: null,
-      updatedAt: new Date().toISOString(),
-      lastUpdate: Date.now(),
-    };
+    // IMPORTANT: Store in Redis as primary (longer TTL)
+    await this.redisService.setMotorState(deviceId, motorState, 7200); // 2 hours
+
+    console.log(`Motor state loaded from database and cached in Redis for device: ${deviceId}`);
+    return motorState;
   }
 
   /**
@@ -88,8 +53,11 @@ export class MotorService {
     if (redisState) {
       motorState = JSON.parse(redisState);
     } else {
-      // Redis miss — use in-memory default, don't block on PostgreSQL
-      motorState = this.buildDefaultMotorState(deviceId) as unknown as MotorState;
+      // Fallback to database if not in Redis
+      motorState = await this.motorStateRepository.findOne({ where: { deviceId } });
+      if (!motorState) {
+        motorState = await this.createDefaultMotorState(deviceId);
+      }
     }
 
     // Map snake_case DTO fields to camelCase entity fields
@@ -420,8 +388,10 @@ export class MotorService {
       throw new BadRequestException('Target level must be specified and greater than 0');
     }
 
-    // MCU offline: allow command to queue in Redis — ESP32 picks it up when it reconnects.
-    // (Only hard-block if protection is active, which is checked above.)
+    // Check if MCU is online for critical commands
+    if (['start', 'target'].includes(command.action) && !currentState.mcuOnline) {
+      throw new BadRequestException('Cannot execute command: MCU is offline');
+    }
   }
 
   /**
